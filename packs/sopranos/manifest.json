@@ -46,7 +46,8 @@
     "resource_limit": {
       "sounds": [
         { "file": "ResourceLimit_Crazy.mp3", "line": "That's crazy" },
-        { "file": "ResourceLimit_DontDoIt.mp3", "line": "Don't do it" }
+        { "file": "ResourceLimit_DontDoIt.mp3", "line": "Don't do it" },
+        { "file": "ResourceLimit_LordTakeMe.mp3", "line": "I wish the Lord would take me now" }
       ]
     },
     "annoyed": {
