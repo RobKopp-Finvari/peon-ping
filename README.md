@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/PeonPing/peon-ping/main/install.sh 
 
 One command. Takes 10 seconds. macOS, WSL2 (Windows), and Linux. Re-run to update (sounds and config preserved). Installs 10 curated English packs by default.
 
-**Install all 36 packs** (every language and franchise):
+**Install all 40 packs** (every language and franchise):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/PeonPing/peon-ping/main/install.sh | bash -s -- --all
@@ -108,11 +108,11 @@ peon-ping works with any agentic IDE that supports hooks. Adapters translate IDE
 | **Claude Code** | Built-in | `curl \| bash` install handles everything |
 | **OpenAI Codex** | Adapter | Add `command = "bash ~/.claude/hooks/peon-ping/adapters/codex.sh"` to `~/.codex/config.toml` under `[notify]` |
 | **Cursor** | Adapter | Add hook entries to `~/.cursor/hooks.json` pointing to `adapters/cursor.sh` |
-| **OpenCode** | Adapter | `curl -fsSL .../adapters/opencode.sh \| bash` — installs TypeScript plugin to `~/.config/opencode/plugins/` |
+| **OpenCode** | Adapter | `curl -fsSL https://raw.githubusercontent.com/PeonPing/peon-ping/main/adapters/opencode.sh \| bash` |
 
 ## Sound packs
 
-36 packs across Warcraft, StarCraft, Red Alert, Portal, Dota 2, Helldivers 2, Elder Scrolls, and more. The default install includes 10 curated English packs:
+40 packs across Warcraft, StarCraft, Red Alert, Portal, Zelda, Dota 2, Helldivers 2, Elder Scrolls, and more. The default install includes 10 curated English packs:
 
 | Pack | Character | Sounds |
 |---|---|---|
@@ -127,7 +127,7 @@ peon-ping works with any agentic IDE that supports hooks. Adapters translate IDE
 | `tf2_engineer` | Engineer (Team Fortress 2) | "Sentry going up.", "Nice work!", "Cowboy up!" |
 | `hd2_helldiver` | Helldiver (Helldivers 2) | "For democracy!", "How 'bout a nice cup of Liber-tea?" |
 
-**[Browse all 36 packs with audio previews &rarr; openpeon.com/packs](https://openpeon.com/packs)**
+**[Browse all 40 packs with audio previews &rarr; openpeon.com/packs](https://openpeon.com/packs)**
 
 Install all 36 with `--all`, or switch packs anytime:
 
@@ -156,7 +156,7 @@ bash .claude/hooks/peon-ping/uninstall.sh           # project-local
 
 `peon.sh` is a Claude Code hook registered for `SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`, and `PermissionRequest` events. On each event it maps to a CESP sound category, picks a random voice line (avoiding repeats), plays it via `afplay` (macOS), PowerShell `MediaPlayer` (WSL2), or `paplay`/`ffplay`/`mpv`/`aplay` (Linux), and updates your Terminal tab title.
 
-Sound packs are downloaded from the [OpenPeon registry](https://github.com/PeonPing/registry) at install time. The original 36 packs are hosted in [PeonPing/og-packs](https://github.com/PeonPing/og-packs). Sound files are property of their respective publishers (Blizzard, Valve, EA, etc.) and are distributed under fair use for personal notification purposes.
+Sound packs are downloaded from the [OpenPeon registry](https://github.com/PeonPing/registry) at install time. The original 40 packs are hosted in [PeonPing/og-packs](https://github.com/PeonPing/og-packs). Sound files are property of their respective publishers (Blizzard, Valve, EA, etc.) and are distributed under fair use for personal notification purposes.
 
 ## Links
 

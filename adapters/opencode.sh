@@ -78,14 +78,8 @@ esac
 mkdir -p "$OPENCODE_PLUGINS_DIR"
 
 info "Downloading peon-ping.ts plugin..."
-if curl -fsSL "$PLUGIN_URL" -o "$OPENCODE_PLUGINS_DIR/peon-ping.ts" 2>/dev/null; then
-  info "Plugin installed to $OPENCODE_PLUGINS_DIR/peon-ping.ts"
-else
-  warn "Could not download from adapters/opencode/ path, trying standalone repo..."
-  FALLBACK_URL="https://raw.githubusercontent.com/atkrv/opencode-peon-ping/main/peon-ping.ts"
-  curl -fsSL "$FALLBACK_URL" -o "$OPENCODE_PLUGINS_DIR/peon-ping.ts"
-  info "Plugin installed from standalone repo."
-fi
+curl -fsSL "$PLUGIN_URL" -o "$OPENCODE_PLUGINS_DIR/peon-ping.ts"
+info "Plugin installed to $OPENCODE_PLUGINS_DIR/peon-ping.ts"
 
 # --- Create default config ---
 mkdir -p "$PEON_CONFIG_DIR"
@@ -124,23 +118,35 @@ mkdir -p "$PACKS_DIR"
 if [ ! -d "$PACKS_DIR/$DEFAULT_PACK" ]; then
   info "Installing default sound pack '$DEFAULT_PACK' from registry..."
 
-  PACK_URL=$(curl -fsSL "$REGISTRY_URL" 2>/dev/null \
+  PACK_INFO=$(curl -fsSL "$REGISTRY_URL" 2>/dev/null \
     | python3 -c "
 import sys, json
 reg = json.load(sys.stdin)
 for p in reg.get('packs', []):
     if p.get('name') == '$DEFAULT_PACK':
-        print(p.get('url', ''))
+        print(p.get('source_repo', ''))
+        print(p.get('source_ref', ''))
+        print(p.get('source_path', ''))
         break
 " 2>/dev/null || echo "")
 
-  if [ -n "$PACK_URL" ]; then
+  SOURCE_REPO=$(echo "$PACK_INFO" | sed -n '1p')
+  SOURCE_REF=$(echo "$PACK_INFO" | sed -n '2p')
+  SOURCE_PATH=$(echo "$PACK_INFO" | sed -n '3p')
+
+  if [ -n "$SOURCE_REPO" ] && [ -n "$SOURCE_REF" ]; then
     TMPDIR_PACK=$(mktemp -d)
-    if curl -fsSL "$PACK_URL" -o "$TMPDIR_PACK/pack.tar.gz" 2>/dev/null; then
-      mkdir -p "$PACKS_DIR/$DEFAULT_PACK"
-      tar xzf "$TMPDIR_PACK/pack.tar.gz" -C "$PACKS_DIR/$DEFAULT_PACK" --strip-components=1 2>/dev/null \
-        || tar xzf "$TMPDIR_PACK/pack.tar.gz" -C "$PACKS_DIR/$DEFAULT_PACK" 2>/dev/null
-      info "Pack '$DEFAULT_PACK' installed to $PACKS_DIR/$DEFAULT_PACK"
+    TARBALL_URL="https://github.com/${SOURCE_REPO}/archive/refs/tags/${SOURCE_REF}.tar.gz"
+    if curl -fsSL "$TARBALL_URL" -o "$TMPDIR_PACK/pack.tar.gz" 2>/dev/null; then
+      tar xzf "$TMPDIR_PACK/pack.tar.gz" -C "$TMPDIR_PACK" 2>/dev/null
+      EXTRACTED=$(find "$TMPDIR_PACK" -maxdepth 1 -type d ! -path "$TMPDIR_PACK" | head -1)
+      if [ -n "$EXTRACTED" ] && [ -d "$EXTRACTED/${SOURCE_PATH}" ]; then
+        mkdir -p "$PACKS_DIR/$DEFAULT_PACK"
+        cp -r "$EXTRACTED/${SOURCE_PATH}/"* "$PACKS_DIR/$DEFAULT_PACK/"
+        info "Pack '$DEFAULT_PACK' installed to $PACKS_DIR/$DEFAULT_PACK"
+      else
+        warn "Could not find pack in downloaded archive."
+      fi
     else
       warn "Could not download pack from registry. You can install packs manually later."
     fi
