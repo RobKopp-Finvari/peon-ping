@@ -187,7 +187,7 @@ SCRIPT
 }
 
 teardown_test_env() {
-  rm -rf "$TEST_DIR"
+  rm -rf "$TEST_DIR" 2>/dev/null || true
 }
 
 # Helper: run peon.sh with a JSON event

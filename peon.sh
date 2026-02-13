@@ -214,6 +214,11 @@ play_sound() {
 send_notification() {
   local msg="$1" title="$2" color="${3:-red}"
   local icon_path="$PEON_DIR/docs/peon-icon.png"
+
+  # Synchronous mode for tests (avoid race with backgrounded processes)
+  local use_bg=true
+  [ "${PEON_TEST:-0}" = "1" ] && use_bg=false
+
   case "$PLATFORM" in
     mac)
       # Use terminal-native escape sequences where supported (shows terminal icon).
@@ -231,18 +236,34 @@ send_notification() {
         *)
           if command -v terminal-notifier &>/dev/null && [ -f "$icon_path" ]; then
             # terminal-notifier supports custom icon (brew install terminal-notifier)
-            nohup terminal-notifier \
-              -title "$title" \
-              -message "$msg" \
-              -appIcon "$icon_path" \
-              -group "peon-ping" >/dev/null 2>&1 &
+            if [ "$use_bg" = true ]; then
+              nohup terminal-notifier \
+                -title "$title" \
+                -message "$msg" \
+                -appIcon "$icon_path" \
+                -group "peon-ping" >/dev/null 2>&1 &
+            else
+              terminal-notifier \
+                -title "$title" \
+                -message "$msg" \
+                -appIcon "$icon_path" \
+                -group "peon-ping" >/dev/null 2>&1
+            fi
           else
             # Terminal.app, Warp, Ghostty, etc. — no native escape; use osascript
-            nohup osascript - "$msg" "$title" >/dev/null 2>&1 <<'APPLESCRIPT' &
+            if [ "$use_bg" = true ]; then
+              nohup osascript - "$msg" "$title" >/dev/null 2>&1 <<'APPLESCRIPT' &
 on run argv
   display notification (item 1 of argv) with title (item 2 of argv)
 end run
 APPLESCRIPT
+            else
+              osascript - "$msg" "$title" >/dev/null 2>&1 <<'APPLESCRIPT'
+on run argv
+  display notification (item 1 of argv) with title (item 2 of argv)
+end run
+APPLESCRIPT
+            fi
           fi
           ;;
       esac
@@ -321,10 +342,17 @@ APPLESCRIPT
       local json_title json_msg
       json_title=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$title" 2>/dev/null || echo "\"$title\"")
       json_msg=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$msg" 2>/dev/null || echo "\"$msg\"")
-      nohup curl -sf -X POST \
-        -H "Content-Type: application/json" \
-        -d "{\"title\":${json_title},\"message\":${json_msg},\"color\":\"$color\"}" \
-        "http://${relay_host}:${relay_port}/notify" >/dev/null 2>&1 &
+      if [ "$use_bg" = true ]; then
+        nohup curl -sf -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"title\":${json_title},\"message\":${json_msg},\"color\":\"$color\"}" \
+          "http://${relay_host}:${relay_port}/notify" >/dev/null 2>&1 &
+      else
+        curl -sf -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"title\":${json_title},\"message\":${json_msg},\"color\":\"$color\"}" \
+          "http://${relay_host}:${relay_port}/notify" >/dev/null 2>&1
+      fi
       ;;
     linux)
       if command -v notify-send &>/dev/null; then
@@ -336,7 +364,11 @@ APPLESCRIPT
         if [ -f "$icon_path" ]; then
           icon_flag="--icon=$icon_path"
         fi
-        nohup notify-send --urgency="$urgency" --expire-time=5000 $icon_flag "$title" "$msg" >/dev/null 2>&1 &
+        if [ "$use_bg" = true ]; then
+          nohup notify-send --urgency="$urgency" --expire-time=5000 $icon_flag "$title" "$msg" >/dev/null 2>&1 &
+        else
+          notify-send --urgency="$urgency" --expire-time=5000 $icon_flag "$title" "$msg" >/dev/null 2>&1
+        fi
       fi
       ;;
   esac
