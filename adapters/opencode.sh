@@ -89,6 +89,10 @@ esac
 # --- Install plugin ---
 mkdir -p "$OPENCODE_PLUGINS_DIR"
 
+# Remove existing file/symlink — curl -o can't write through a broken symlink
+# (e.g. leftover from Homebrew cellar path after an upgrade)
+rm -f "$OPENCODE_PLUGINS_DIR/peon-ping.ts"
+
 info "Downloading peon-ping.ts plugin..."
 curl -fsSL "$PLUGIN_URL" -o "$OPENCODE_PLUGINS_DIR/peon-ping.ts"
 info "Plugin installed to $OPENCODE_PLUGINS_DIR/peon-ping.ts"
