@@ -1267,3 +1267,57 @@ assert mn['service'] == 'ntfy', 'service should be preserved'
   [[ "$output" == *"mobile"* ]]
   [[ "$output" == *"ntfy"* ]]
 }
+
+# ============================================================
+# Preview command
+# ============================================================
+
+@test "preview with no arg plays all session.start sounds" {
+  run bash "$PEON_SH" preview
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"previewing [session.start]"* ]]
+  [[ "$output" == *"Ready to work?"* ]]
+  [[ "$output" == *"Yes?"* ]]
+  afplay_was_called
+  # session.start has 2 sounds in the test manifest
+  [ "$(afplay_call_count)" -eq 2 ]
+}
+
+@test "preview with explicit category plays those sounds" {
+  run bash "$PEON_SH" preview task.complete
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"previewing [task.complete]"* ]]
+  afplay_was_called
+  # task.complete has 2 sounds in the test manifest
+  [ "$(afplay_call_count)" -eq 2 ]
+}
+
+@test "preview with single-sound category plays one sound" {
+  run bash "$PEON_SH" preview user.spam
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Me busy, leave me alone!"* ]]
+  afplay_was_called
+  [ "$(afplay_call_count)" -eq 1 ]
+}
+
+@test "preview with invalid category shows error and available categories" {
+  run bash "$PEON_SH" preview nonexistent.category
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not found"* ]]
+  [[ "$output" == *"Available categories"* ]]
+}
+
+@test "help shows preview command" {
+  output=$(bash "$PEON_SH" help)
+  [[ "$output" == *"preview"* ]]
+}
+
+@test "preview --list shows all categories with sound counts" {
+  run bash "$PEON_SH" preview --list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"categories in"* ]]
+  [[ "$output" == *"session.start"* ]]
+  [[ "$output" == *"task.complete"* ]]
+  [[ "$output" == *"user.spam"* ]]
+  [[ "$output" == *"sounds"* ]]
+}
