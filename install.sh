@@ -455,7 +455,7 @@ chmod +x "$INSTALL_DIR/relay.sh"
 SKILL_DIR="$BASE_DIR/skills/peon-ping-toggle"
 mkdir -p "$SKILL_DIR"
 if [ "$LOCAL_MODE" = true ]; then
-  SKILL_HOOK_CMD="bash .claude/hooks/peon-ping/peon.sh"
+  SKILL_HOOK_CMD="bash $HOME/.claude/hooks/peon-ping/peon.sh"
 else
   SKILL_HOOK_CMD="bash $INSTALL_DIR/peon.sh"
 fi
@@ -553,19 +553,18 @@ if [ "$LOCAL_MODE" = false ] && [ "$UPDATING" = false ]; then
 fi
 
 # --- Update settings.json ---
+# Always write hooks to GLOBAL settings — hooks need absolute paths and
+# must work regardless of which project directory Claude Code runs in.
 echo ""
 echo "Updating Claude Code hooks in settings.json..."
 
-if [ "$LOCAL_MODE" = true ]; then
-  HOOK_CMD=".claude/hooks/peon-ping/peon.sh"
-else
-  HOOK_CMD="$INSTALL_DIR/peon.sh"
-fi
+HOOK_CMD="$GLOBAL_BASE/hooks/peon-ping/peon.sh"
+HOOK_SETTINGS="$GLOBAL_BASE/settings.json"
 
 python3 -c "
 import json, os, sys
 
-settings_path = '$SETTINGS'
+settings_path = '$HOOK_SETTINGS'
 hook_cmd = '$HOOK_CMD'
 
 # Load existing settings
@@ -613,14 +612,12 @@ with open(settings_path, 'w') as f:
 print('Hooks registered for: ' + ', '.join(events))
 "
 
-# --- Remove peon-ping hooks from the OTHER settings scope to prevent doubles ---
-if [ "$LOCAL_MODE" = true ]; then
-  OTHER_SETTINGS="$GLOBAL_BASE/settings.json"
-else
-  OTHER_SETTINGS="$LOCAL_BASE/settings.json"
-fi
+# --- Remove peon-ping hooks from project-level settings to prevent doubles ---
+# Since hooks are always written to global settings now, clean any stale
+# project-level hooks that may exist from older installs.
+OTHER_SETTINGS="$LOCAL_BASE/settings.json"
 
-if [ -f "$OTHER_SETTINGS" ] && [ "$OTHER_SETTINGS" != "$SETTINGS" ]; then
+if [ -f "$OTHER_SETTINGS" ] && [ "$OTHER_SETTINGS" != "$HOOK_SETTINGS" ]; then
   python3 -c "
 import json, os
 
