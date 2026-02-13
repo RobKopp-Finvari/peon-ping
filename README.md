@@ -2,11 +2,11 @@
 
 ![macOS](https://img.shields.io/badge/macOS-blue) ![WSL2](https://img.shields.io/badge/WSL2-blue) ![Linux](https://img.shields.io/badge/Linux-blue) ![SSH](https://img.shields.io/badge/SSH-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Claude Code](https://img.shields.io/badge/Claude_Code-hook-ffab01) ![Codex](https://img.shields.io/badge/Codex-adapter-ffab01) ![Cursor](https://img.shields.io/badge/Cursor-adapter-ffab01) ![OpenCode](https://img.shields.io/badge/OpenCode-adapter-ffab01) ![Antigravity](https://img.shields.io/badge/Antigravity-adapter-ffab01)
+![Claude Code](https://img.shields.io/badge/Claude_Code-hook-ffab01) ![Codex](https://img.shields.io/badge/Codex-adapter-ffab01) ![Cursor](https://img.shields.io/badge/Cursor-adapter-ffab01) ![OpenCode](https://img.shields.io/badge/OpenCode-adapter-ffab01) ![Kiro](https://img.shields.io/badge/Kiro-adapter-ffab01) ![Antigravity](https://img.shields.io/badge/Antigravity-adapter-ffab01)
 
 **Game character voice lines when your AI coding agent needs attention.**
 
-AI coding agents don't notify you when they finish or need permission. You tab away, lose focus, and waste 15 minutes getting back into flow. peon-ping fixes this with voice lines from Warcraft, StarCraft, Portal, Zelda, and more — works with **Claude Code**, **Codex**, **Cursor**, **OpenCode**, and **Google Antigravity**.
+AI coding agents don't notify you when they finish or need permission. You tab away, lose focus, and waste 15 minutes getting back into flow. peon-ping fixes this with voice lines from Warcraft, StarCraft, Portal, Zelda, and more — works with **Claude Code**, **Codex**, **Cursor**, **OpenCode**, **Kiro**, and **Google Antigravity**.
 
 **See it in action** &rarr; [peonping.com](https://peonping.com/)
 
@@ -142,7 +142,30 @@ peon-ping works with any agentic IDE that supports hooks. Adapters translate IDE
 | **OpenAI Codex** | Adapter | Add `notify = ["bash", "/absolute/path/to/.claude/hooks/peon-ping/adapters/codex.sh"]` to `~/.codex/config.toml` |
 | **Cursor** | Adapter | Add hook entries to `~/.cursor/hooks.json` pointing to `adapters/cursor.sh` |
 | **OpenCode** | Adapter | `curl -fsSL https://raw.githubusercontent.com/PeonPing/peon-ping/main/adapters/opencode.sh \| bash` |
+| **Kiro** | Adapter | Add hook entries to `~/.kiro/agents/peon-ping.json` pointing to `adapters/kiro.sh` ([setup](#kiro-setup)) |
 | **Google Antigravity** | Adapter | `bash ~/.claude/hooks/peon-ping/adapters/antigravity.sh` (requires `fswatch`: `brew install fswatch`) |
+
+### Kiro setup
+
+Create `~/.kiro/agents/peon-ping.json`:
+
+```json
+{
+  "hooks": {
+    "agentSpawn": [
+      { "command": "bash ~/.claude/hooks/peon-ping/adapters/kiro.sh" }
+    ],
+    "userPromptSubmit": [
+      { "command": "bash ~/.claude/hooks/peon-ping/adapters/kiro.sh" }
+    ],
+    "stop": [
+      { "command": "bash ~/.claude/hooks/peon-ping/adapters/kiro.sh" }
+    ]
+  }
+}
+```
+
+`preToolUse`/`postToolUse` are intentionally excluded — they fire on every tool call and would be extremely noisy.
 
 ## Remote development (SSH / Devcontainers / Codespaces)
 
@@ -270,3 +293,7 @@ Sound packs are downloaded from the [OpenPeon registry](https://github.com/PeonP
 - [OpenPeon registry](https://github.com/PeonPing/registry) — pack registry (GitHub Pages)
 - [og-packs](https://github.com/PeonPing/og-packs) — official sound packs
 - [License (MIT)](LICENSE)
+
+## Contributors
+
+- [@bjnewman](https://github.com/bjnewman) — Kiro CLI adapter ([#106](https://github.com/PeonPing/peon-ping/pull/106))

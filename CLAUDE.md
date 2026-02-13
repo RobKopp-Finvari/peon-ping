@@ -65,6 +65,7 @@ IDE triggers hook → `peon.sh` reads JSON stdin → single Python call maps eve
 - **`adapters/cursor.sh`** — Translates Cursor events to CESP JSON
 - **`adapters/opencode.sh`** — Installer for OpenCode adapter
 - **`adapters/opencode/peon-ping.ts`** — Full TypeScript CESP plugin for OpenCode IDE
+- **`adapters/kiro.sh`** — Translates Kiro CLI (Amazon) events to CESP JSON
 - **`adapters/antigravity.sh`** — Filesystem watcher for Google Antigravity agent events
 
 All adapters translate IDE-specific events into the standardized CESP JSON format that `peon.sh` expects.
