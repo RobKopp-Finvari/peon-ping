@@ -352,7 +352,7 @@ powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\hooks\peon-pi
 
 ## Requirements
 
-- macOS (uses `afplay` and AppleScript), Windows (native PowerShell or WSL2), or Linux (uses `pw-play`/`paplay`/`ffplay`/`mpv`/`aplay` and `notify-send`)
+- macOS (uses `afplay` and AppleScript), Windows (native PowerShell or WSL2, uses PowerShell `MediaPlayer` and WinForms), or Linux (uses `pw-play`/`paplay`/`ffplay`/`mpv`/`aplay` and `notify-send`)
 - Claude Code with hooks support
 - python3 (not required for native Windows)
 - For SSH/remote: `curl` on the remote host
