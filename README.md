@@ -1,4 +1,7 @@
 # peon-ping
+<div align="center">
+
+**English** | [中文](README_zh.md)
 
 ![macOS](https://img.shields.io/badge/macOS-blue) ![WSL2](https://img.shields.io/badge/WSL2-blue) ![Linux](https://img.shields.io/badge/Linux-blue) ![Windows](https://img.shields.io/badge/Windows-blue) ![SSH](https://img.shields.io/badge/SSH-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -10,6 +13,8 @@
 AI coding agents don't notify you when they finish or need permission. You tab away, lose focus, and waste 15 minutes getting back into flow. peon-ping fixes this with voice lines from Warcraft, StarCraft, Portal, Zelda, and more — works with **Claude Code**, **Codex**, **Cursor**, **OpenCode**, **Kilo CLI**, **Kiro**, **Windsurf**, and **Google Antigravity**.
 
 **See it in action** &rarr; [peonping.com](https://peonping.com/)
+
+</div>
 
 ---
 
