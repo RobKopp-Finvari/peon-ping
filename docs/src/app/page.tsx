@@ -1240,6 +1240,66 @@ export default function LandingPage() {
                 </p>
               </div>
             </div>
+            <div className="feature-card">
+              <div className="feature-icon">{"\uD83D\uDCAA"}</div>
+              <div className="feature-text">
+                <h3>Peon Trainer</h3>
+                <p>300 pushups &amp; squats daily. Session-start reminders, mid-conversation logging, periodic nags. <a href="#trainer">See how it works</a>.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============ PEON TRAINER ============ */}
+      <section id="trainer">
+        <div className="container">
+          <p className="section-label">New in 2.0</p>
+          <h2 className="section-title">Peon Trainer Mode</h2>
+          <p className="section-desc">
+            300 pushups. 300 squats. Every day. The Peon nags you between coding sessions so you get jacked while shipping code.
+          </p>
+
+          <div className="trainer-demo">
+            <div className="trainer-step">
+              <div className="trainer-step-num">1</div>
+              <div className="trainer-step-content">
+                <div className="trainer-step-label">Session starts</div>
+                <div className="trainer-step-desc">Peon greets you with a workout reminder the instant you open Claude Code.</div>
+                <div className="trainer-quote">{"\uD83D\uDD0A"} &quot;Session start! You know the rules. Pushups first, code second! Zug zug!&quot;</div>
+              </div>
+            </div>
+            <div className="trainer-step">
+              <div className="trainer-step-num">2</div>
+              <div className="trainer-step-content">
+                <div className="trainer-step-label">Log reps mid-conversation</div>
+                <div className="trainer-step-desc">Use the Claude Code skill to log without leaving your session.</div>
+                <code className="trainer-cmd">
+                  <span style={{ color: "var(--wc3-text-dim)" }}>$</span> /peon-ping-log 25 pushups
+                </code>
+                <div className="trainer-quote">{"\uD83D\uDD0A"} &quot;Not bad for puny human.&quot;</div>
+              </div>
+            </div>
+            <div className="trainer-step">
+              <div className="trainer-step-num">3</div>
+              <div className="trainer-step-content">
+                <div className="trainer-step-label">Periodic reminders</div>
+                <div className="trainer-step-desc">Every ~20 minutes, Peon reminds you to do more reps. Escalates if you slack.</div>
+                <div className="trainer-quote">{"\uD83D\uDD0A"} &quot;You sit too long! Peon say do pushups NOW!&quot;</div>
+              </div>
+            </div>
+            <div className="trainer-step">
+              <div className="trainer-step-num">{"\u2713"}</div>
+              <div className="trainer-step-content">
+                <div className="trainer-step-label">Daily goal complete</div>
+                <div className="trainer-step-desc">Hit 300 and Peon celebrates. No more reminders for the rest of the day.</div>
+                <div className="trainer-quote">{"\uD83D\uDD0A"} &quot;THREE HUNDRED! Human strong like orc now!&quot;</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="trainer-enable">
+            <CopyBlock command="peon trainer on" label="Copy trainer enable command" />
           </div>
         </div>
       </section>
