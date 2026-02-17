@@ -383,13 +383,17 @@ function escapeAppleScript(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
 }
 
-function createDebounceChecker(debounceMs: number) {
+function createDebounceChecker(
+  debounceMs: number,
+  overrides: Partial<Record<CESPCategory, number>> = {},
+) {
   const lastEventTime: Partial<Record<CESPCategory, number>> = {}
 
   return function shouldDebounce(category: CESPCategory, now?: number): boolean {
     const time = now ?? Date.now()
     const last = lastEventTime[category]
-    if (last && time - last < debounceMs) return true
+    const threshold = overrides[category] ?? debounceMs
+    if (last && time - last < threshold) return true
     lastEventTime[category] = time
     return false
   }
@@ -704,7 +708,9 @@ export const PeonPingPlugin: Plugin = async ({ directory }) => {
   const iconPath = resolveIconPath()
 
   // --- In-memory state for debouncing and spam detection ---
-  const shouldDebounce = createDebounceChecker(config.debounce_ms)
+  const shouldDebounce = createDebounceChecker(config.debounce_ms, {
+    "task.complete": 5000,
+  })
   const checkSpamRaw = createSpamChecker(config.spam_threshold, config.spam_window_seconds)
 
   /** Wrapper that respects the user.spam category toggle. */
