@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.2.0 (2026-02-17)
+
+### Added
+- MCP server (`mcp/`) for agent-driven sound playback via Model Context Protocol
+- OpenClaw adapter documented in README and llms.txt
+- `SubagentStart` and `PostToolUseFailure` now registered in installer hook list
+- `task.error` and `task.acknowledge` added to "What you'll hear" README table
+- `/peon-ping-use` and `/peon-ping-log` skills documented in CLAUDE.md and llms.txt
+
+### Fixed
+- MCP server: `pw-play` volume now uses correct 0.0–1.0 float scale (was 0–65536)
+- MCP server: reads volume from `config.json` instead of requiring `PEON_VOLUME` env var
+- `openclaw.sh`: error events now map to `PostToolUseFailure` (task.error) not `Stop`
+- `peon help`: added missing `mobile on/pushover/telegram` and `relay --bind` entries
+- Windows installer: `PostToolUseFailure` and `SubagentStart` now registered and handled
+
+### Changed
+- Pack count updated to 75+ across all docs
+- Hero copy updated to "any AI agent" framing with MCP server mention
+
 ## v2.1.1 (2026-02-17)
 
 ### Security
