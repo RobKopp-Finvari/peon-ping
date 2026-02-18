@@ -3,7 +3,7 @@
 // Usage: osascript -l JavaScript mac-overlay.js <message> <color> <icon_path> <slot> <dismiss_seconds>
 //
 // Creates a borderless, always-on-top overlay on every screen.
-// Click the banner or press ⌥Return to focus the source window.
+// Click the banner to focus the source window.
 // Dismisses automatically after <dismiss_seconds> seconds.
 
 ObjC.import('Cocoa');
@@ -99,7 +99,7 @@ function run(argv) {
     // Message label — vertically centered
     var font = $.NSFont.boldSystemFontOfSize(16);
     var textHeight = font.ascender - font.descender + font.leading + 4;
-    var textY = (winHeight - textHeight) / 2 + 6;
+    var textY = (winHeight - textHeight) / 2;
     var label = $.NSTextField.alloc.initWithFrame(
       $.NSMakeRect(textX, textY, textWidth, textHeight)
     );
@@ -120,7 +120,7 @@ function run(argv) {
     var hintLabel = $.NSTextField.alloc.initWithFrame(
       $.NSMakeRect(textX, 4, textWidth, 12)
     );
-    hintLabel.setStringValue($('click or ⌥↵ to focus'));
+    hintLabel.setStringValue($('click to focus'));
     hintLabel.setBezeled(false);
     hintLabel.setDrawsBackground(false);
     hintLabel.setEditable(false);
@@ -141,23 +141,6 @@ function run(argv) {
     function(event) {
       activateTarget();
       return null; // consume the event
-    }
-  );
-
-  // Global monitor: ⌥Return → activate source window
-  // Fires only if Accessibility permission is granted; silently skips otherwise.
-  var keyMonitor = $.NSEvent.addGlobalMonitorForEventsMatchingMaskHandler(
-    $.NSEventMaskKeyDown,
-    function(event) {
-      var flags = event.modifierFlags;
-      var keyCode = event.keyCode;
-      var optionOnly = ((flags & $.NSEventModifierFlagOption) !== 0) &&
-                       ((flags & ($.NSEventModifierFlagCommand |
-                                  $.NSEventModifierFlagControl |
-                                  $.NSEventModifierFlagShift)) === 0);
-      if (keyCode === 36 && optionOnly) { // 36 = Return
-        activateTarget();
-      }
     }
   );
 
