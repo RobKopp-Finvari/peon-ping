@@ -2192,24 +2192,31 @@ if [ "$EVENT" = "SessionStart" ] && [ "$PAUSED" = "true" ]; then
   echo "peon-ping: sounds paused — run 'peon resume' or '/peon-ping-toggle' to unpause" >&2
 fi
 
-# --- Devcontainer relay guidance on SessionStart ---
-if [ "$EVENT" = "SessionStart" ] && [ "$PLATFORM" = "devcontainer" ]; then
-  RELAY_HOST="${PEON_RELAY_HOST:-host.docker.internal}"
-  RELAY_PORT="${PEON_RELAY_PORT:-19998}"
-  if ! curl -sf --connect-timeout 1 --max-time 2 "http://${RELAY_HOST}:${RELAY_PORT}/health" >/dev/null 2>&1; then
-    echo "peon-ping: devcontainer detected but audio relay not reachable at ${RELAY_HOST}:${RELAY_PORT}" >&2
-    echo "peon-ping: run 'peon relay' on your host machine to enable sounds" >&2
+# --- Relay guidance on SessionStart (devcontainer/SSH) ---
+# Backgrounded in production to avoid blocking the greeting sound while curl times out.
+_relay_guidance() {
+  if [ "$PLATFORM" = "devcontainer" ]; then
+    RELAY_HOST="${PEON_RELAY_HOST:-host.docker.internal}"
+    RELAY_PORT="${PEON_RELAY_PORT:-19998}"
+    if ! curl -sf --connect-timeout 1 --max-time 2 "http://${RELAY_HOST}:${RELAY_PORT}/health" >/dev/null 2>&1; then
+      echo "peon-ping: devcontainer detected but audio relay not reachable at ${RELAY_HOST}:${RELAY_PORT}" >&2
+      echo "peon-ping: run 'peon relay' on your host machine to enable sounds" >&2
+    fi
+  elif [ "$PLATFORM" = "ssh" ]; then
+    RELAY_HOST="${PEON_RELAY_HOST:-localhost}"
+    RELAY_PORT="${PEON_RELAY_PORT:-19998}"
+    if ! curl -sf --connect-timeout 1 --max-time 2 "http://${RELAY_HOST}:${RELAY_PORT}/health" >/dev/null 2>&1; then
+      echo "peon-ping: SSH session detected but audio relay not reachable at ${RELAY_HOST}:${RELAY_PORT}" >&2
+      echo "peon-ping: on your LOCAL machine, run: peon relay" >&2
+      echo "peon-ping: then reconnect with: ssh -R 19998:localhost:19998 <host>" >&2
+    fi
   fi
-fi
-
-# --- SSH relay guidance on SessionStart ---
-if [ "$EVENT" = "SessionStart" ] && [ "$PLATFORM" = "ssh" ]; then
-  RELAY_HOST="${PEON_RELAY_HOST:-localhost}"
-  RELAY_PORT="${PEON_RELAY_PORT:-19998}"
-  if ! curl -sf --connect-timeout 1 --max-time 2 "http://${RELAY_HOST}:${RELAY_PORT}/health" >/dev/null 2>&1; then
-    echo "peon-ping: SSH session detected but audio relay not reachable at ${RELAY_HOST}:${RELAY_PORT}" >&2
-    echo "peon-ping: on your LOCAL machine, run: peon relay" >&2
-    echo "peon-ping: then reconnect with: ssh -R 19998:localhost:19998 <host>" >&2
+}
+if [ "$EVENT" = "SessionStart" ] && { [ "$PLATFORM" = "devcontainer" ] || [ "$PLATFORM" = "ssh" ]; }; then
+  if [ "${PEON_TEST:-0}" = "1" ]; then
+    _relay_guidance
+  else
+    _relay_guidance &
   fi
 fi
 
