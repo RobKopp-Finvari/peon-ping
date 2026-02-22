@@ -45,7 +45,8 @@ OPENCLAW_BASE="$HOME/.openclaw"
 if [ "$NO_RC" = false ]; then
   for _cfg in "$GLOBAL_BASE/hooks/peon-ping/config.json" "$LOCAL_BASE/hooks/peon-ping/config.json"; do
     if [ -f "$_cfg" ]; then
-      _no_rc=$(python3 -c "import json; print(json.load(open('$_cfg')).get('no_rc', False))" 2>/dev/null)
+      _cfg_py="$_cfg"; command -v cygpath &>/dev/null && _cfg_py="$(cygpath -m "$_cfg")"
+      _no_rc=$(python3 -c "import json; print(json.load(open('$_cfg_py')).get('no_rc', False))" 2>/dev/null)
       if [ "$_no_rc" = "True" ]; then
         NO_RC=true
       fi
@@ -127,10 +128,20 @@ detect_platform() {
       else
         echo "linux"
       fi ;;
+    MSYS_NT*|MINGW*) echo "msys2" ;;
     *) echo "unknown" ;;
   esac
 }
 PLATFORM=$(detect_platform)
+
+# MSYS2/MinGW: Windows Python can't read /c/... paths — convert to C:/... via cygpath
+py_path() {
+  if [ "$PLATFORM" = "msys2" ]; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
 
 # --- Detect update vs fresh install ---
 UPDATING=false
@@ -148,8 +159,8 @@ else
 fi
 
 # --- Prerequisites ---
-if [ "$PLATFORM" != "mac" ] && [ "$PLATFORM" != "wsl" ] && [ "$PLATFORM" != "linux" ] && [ "$PLATFORM" != "devcontainer" ] && [ "$PLATFORM" != "ssh" ]; then
-  echo "Error: peon-ping requires macOS, Linux, WSL, SSH, or a devcontainer"
+if [ "$PLATFORM" != "mac" ] && [ "$PLATFORM" != "wsl" ] && [ "$PLATFORM" != "linux" ] && [ "$PLATFORM" != "devcontainer" ] && [ "$PLATFORM" != "ssh" ] && [ "$PLATFORM" != "msys2" ]; then
+  echo "Error: peon-ping requires macOS, Linux, WSL, MSYS2, SSH, or a devcontainer"
   exit 1
 fi
 
@@ -205,6 +216,27 @@ elif [ "$PLATFORM" = "linux" ]; then
   else
     echo "Warning: notify-send not found (libnotify-bin). Desktop notifications will be disabled."
   fi
+elif [ "$PLATFORM" = "msys2" ]; then
+  if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 is required"
+    exit 1
+  fi
+  if ! command -v cygpath &>/dev/null; then
+    echo "Error: cygpath is required (should be built into MSYS2/Git Bash)"
+    exit 1
+  fi
+  MSYS2_PLAYER=""
+  for cmd in ffplay mpv play; do
+    if command -v "$cmd" &>/dev/null; then
+      MSYS2_PLAYER="$cmd"
+      break
+    fi
+  done
+  if [ -n "$MSYS2_PLAYER" ]; then
+    echo "Audio player: $MSYS2_PLAYER"
+  else
+    echo "Audio: PowerShell MediaPlayer fallback (native players like ffplay/mpv preferred for lower latency)"
+  fi
 fi
 
 if [ ! -d "$BASE_DIR" ]; then
@@ -232,7 +264,7 @@ remove_existing_install() {
 import json
 import os
 
-path = '$target_settings'
+path = '$(py_path "$target_settings")'
 try:
     with open(path) as f:
         settings = json.load(f)
@@ -310,6 +342,11 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURCE[0]}" != "bash" ]; then
   fi
 fi
 
+# --- Python-safe path variants (MSYS2 Windows Python needs C:/... not /c/...) ---
+INSTALL_DIR_PY="$(py_path "$INSTALL_DIR")"
+GLOBAL_BASE_PY="$(py_path "$GLOBAL_BASE")"
+LOCAL_BASE_PY="$(py_path "$LOCAL_BASE")"
+
 # --- Install/update core tool files ---
 mkdir -p "$INSTALL_DIR"
 
@@ -386,9 +423,9 @@ if [ "$UPDATING" = true ] && [ -f "$INSTALL_DIR/config.json" ]; then
 import json, sys
 
 try:
-    with open('$DEFAULT_CFG') as f:
+    with open('$(py_path "$DEFAULT_CFG")') as f:
         defaults = json.load(f)
-    with open('$INSTALL_DIR/config.json') as f:
+    with open('$INSTALL_DIR_PY/config.json') as f:
         user_cfg = json.load(f)
 except Exception:
     sys.exit(0)
@@ -414,7 +451,7 @@ fi
 if [ "$NO_RC" = true ] && [ -f "$INSTALL_DIR/config.json" ]; then
   python3 -c "
 import json
-path = '$INSTALL_DIR/config.json'
+path = '$INSTALL_DIR_PY/config.json'
 with open(path) as f:
     cfg = json.load(f)
 if not cfg.get('no_rc', False):
@@ -529,7 +566,7 @@ elif [ -z "$SCRIPT_DIR" ]; then
   # Parse manifest to download all trainer sounds
   python3 -c "
 import json, sys
-m = json.load(open('$TRAINER_DIR/manifest.json'))
+m = json.load(open('$(py_path "$TRAINER_DIR")/manifest.json'))
 for cat in m.values():
     for s in cat:
         print(s['file'])
@@ -712,8 +749,8 @@ HOOK_SETTINGS="$GLOBAL_BASE/settings.json"
 python3 -c "
 import json, os, sys
 
-settings_path = '$HOOK_SETTINGS'
-hook_cmd = '$HOOK_CMD'
+settings_path = '$(py_path "$HOOK_SETTINGS")'
+hook_cmd = '$(py_path "$HOOK_CMD")'
 
 # Load existing settings
 if os.path.exists(settings_path):
@@ -791,8 +828,8 @@ BEFORE_SUBMIT_HOOK="$GLOBAL_BASE/hooks/peon-ping/scripts/hook-handle-use.sh"
 python3 -c "
 import json, os, sys
 
-settings_path = '$HOOK_SETTINGS'
-hook_cmd = '$BEFORE_SUBMIT_HOOK'
+settings_path = '$(py_path "$HOOK_SETTINGS")'
+hook_cmd = '$(py_path "$BEFORE_SUBMIT_HOOK")'
 
 # Load existing settings
 if os.path.exists(settings_path):
@@ -865,8 +902,8 @@ if [ -d "$CURSOR_DIR" ]; then
   python3 -c "
 import json, os
 
-hooks_file = '$CURSOR_HOOKS_FILE'
-hook_cmd = '$CURSOR_HOOK_CMD'
+hooks_file = '$(py_path "$CURSOR_HOOKS_FILE")'
+hook_cmd = '$(py_path "$CURSOR_HOOK_CMD")'
 
 # Load or create hooks.json
 if os.path.exists(hooks_file):
@@ -951,7 +988,7 @@ if [ -f "$OTHER_SETTINGS" ] && [ "$OTHER_SETTINGS" != "$HOOK_SETTINGS" ]; then
   python3 -c "
 import json, os
 
-path = '$OTHER_SETTINGS'
+path = '$(py_path "$OTHER_SETTINGS")'
 try:
     with open(path) as f:
         settings = json.load(f)
@@ -999,7 +1036,7 @@ else
   ACTIVE_PACK=$(python3 -c "
 import json
 try:
-    c = json.load(open('$INSTALL_DIR/config.json'))
+    c = json.load(open('$INSTALL_DIR_PY/config.json'))
     print(c.get('active_pack', 'peon'))
 except Exception:
     print('peon')
@@ -1011,7 +1048,7 @@ except Exception:
       USE_SFX=$(python3 -c "
 import json
 try:
-    c = json.load(open('$INSTALL_DIR/config.json'))
+    c = json.load(open('$INSTALL_DIR_PY/config.json'))
     print(str(c.get('use_sound_effects_device', True)).lower())
 except Exception:
     print('true')
@@ -1046,6 +1083,17 @@ except Exception:
         mpv --no-video --volume=30 "$TEST_SOUND" 2>/dev/null
       elif command -v aplay &>/dev/null; then
         aplay -q "$TEST_SOUND" 2>/dev/null
+      fi
+    elif [ "$PLATFORM" = "msys2" ]; then
+      if command -v ffplay &>/dev/null; then
+        ffplay -nodisp -autoexit -volume 30 "$TEST_SOUND" 2>/dev/null
+      elif command -v mpv &>/dev/null; then
+        mpv --no-video --volume=30 "$TEST_SOUND" 2>/dev/null
+      elif command -v play &>/dev/null; then
+        play -v 0.3 "$TEST_SOUND" 2>/dev/null
+      else
+        wpath=$(cygpath -w "$TEST_SOUND")
+        powershell.exe -NoProfile -NonInteractive -File "$(cygpath -w "$INSTALL_DIR/scripts/win-play.ps1")" -path "$wpath" -vol 0.3 2>/dev/null
       fi
     fi
     echo "Sound working!"

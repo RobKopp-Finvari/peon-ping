@@ -24,6 +24,7 @@ detect_platform() {
       else
         echo "linux"
       fi ;;
+    MSYS_NT*|MINGW*) echo "msys2" ;;
     *) echo "unknown" ;;
   esac
 }
@@ -62,6 +63,19 @@ unset _local_config
 # regardless of which project directory the user is in.
 GLOBAL_CONFIG="$PEON_DIR/config.json"
 STATE="$PEON_DIR/.state.json"
+
+# MSYS2/MinGW: Windows Python can't read /c/... paths — convert to C:/... via cygpath
+if [ "$PLATFORM" = "msys2" ]; then
+  CONFIG_PY="$(cygpath -m "$CONFIG")"
+  GLOBAL_CONFIG_PY="$(cygpath -m "$GLOBAL_CONFIG")"
+  STATE_PY="$(cygpath -m "$STATE")"
+  PEON_DIR_PY="$(cygpath -m "$PEON_DIR")"
+else
+  CONFIG_PY="$CONFIG"
+  GLOBAL_CONFIG_PY="$GLOBAL_CONFIG"
+  STATE_PY="$STATE"
+  PEON_DIR_PY="$PEON_DIR"
+fi
 
 # --- Resolve a bundled script from scripts/ (handles local + Homebrew/Cellar installs) ---
 # Prints the resolved path on success, prints nothing on failure.
@@ -267,6 +281,30 @@ play_sound() {
         save_sound_pid $!
       fi
       ;;
+    msys2)
+      # Try native MSYS2 players first (ffplay, mpv, play), fall back to PowerShell
+      local msys_player
+      msys_player=$(detect_linux_player "${LINUX_AUDIO_PLAYER:-}") || msys_player=""
+      if [ -n "$msys_player" ]; then
+        play_linux_sound "$file" "$vol" "$msys_player"
+        save_sound_pid $!
+      else
+        # PowerShell fallback via win-play.ps1
+        local wpath win_play_script
+        wpath=$(cygpath -w "$file")
+        win_play_script="$(find_bundled_script "win-play.ps1")" 2>/dev/null || true
+        if [ -n "$win_play_script" ]; then
+          local wscript
+          wscript=$(cygpath -w "$win_play_script")
+          if [ "${PEON_TEST:-0}" = "1" ]; then
+            powershell.exe -NoProfile -NonInteractive -File "$wscript" -path "$wpath" -vol "$vol" >/dev/null 2>&1
+          else
+            nohup powershell.exe -NoProfile -NonInteractive -File "$wscript" -path "$wpath" -vol "$vol" >/dev/null 2>&1 &
+            save_sound_pid $!
+          fi
+        fi
+      fi
+      ;;
   esac
 }
 
@@ -335,7 +373,7 @@ send_notification() {
   [ "${PEON_TEST:-0}" = "1" ] && use_bg=false
 
   case "$PLATFORM" in
-    mac|wsl|linux)
+    mac|wsl|linux|msys2)
       # Delegate to shared notify.sh script
       local notify_script
       notify_script="$(find_bundled_script "notify.sh")" 2>/dev/null || true
@@ -392,8 +430,8 @@ terminal_is_focused() {
         *) return 1 ;;
       esac
       ;;
-    wsl)
-      # Checking Windows focus from WSL adds too much latency; always notify
+    wsl|msys2)
+      # Checking Windows focus from WSL/MSYS2 adds too much latency; always notify
       return 1
       ;;
     devcontainer|ssh)
@@ -422,7 +460,7 @@ terminal_is_focused() {
 # Config: config.json → mobile_notify: { service, topic/user_key/chat_id, ... }
 send_mobile_notification() {
   local msg="$1" title="$2" color="${3:-red}"
-  local config="$CONFIG"
+  local config="$CONFIG_PY"
 
   # Read mobile config via Python (fast, single invocation)
   local mobile_vars
@@ -600,8 +638,8 @@ case "${1:-}" in
     python3 -c "
 import json, os
 
-config_path = '$CONFIG'
-peon_dir = '$PEON_DIR'
+config_path = '$CONFIG_PY'
+peon_dir = '$PEON_DIR_PY'
 
 # --- Config ---
 try:
@@ -706,7 +744,7 @@ else:
       on)
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -719,7 +757,7 @@ print('peon-ping: desktop notifications on')
       off)
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -732,7 +770,7 @@ print('peon-ping: desktop notifications off')
       overlay)
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -745,7 +783,7 @@ print('peon-ping: notification style set to overlay')
       standard)
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -760,7 +798,7 @@ print('peon-ping: notification style set to standard')
         eval "$(python3 -c "
 import json, shlex
 q = shlex.quote
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -786,7 +824,7 @@ print('NOTIF_STYLE=' + q(ns))
       python3 -c "
 import json
 try:
-    cfg = json.load(open('$CONFIG'))
+    cfg = json.load(open('$CONFIG_PY'))
     print('peon-ping: volume ' + str(cfg.get('volume', 0.5)))
 except Exception:
     print('peon-ping: volume 0.5')
@@ -795,7 +833,7 @@ except Exception:
     fi
     python3 -c "
 import json, sys
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     vol = float('$VOL_ARG')
 except ValueError:
@@ -819,7 +857,7 @@ print(f'peon-ping: volume set to {vol}')
       python3 -c "
 import json
 try:
-    cfg = json.load(open('$CONFIG'))
+    cfg = json.load(open('$CONFIG_PY'))
     mode = cfg.get('pack_rotation_mode', 'random')
     rotation = cfg.get('pack_rotation', [])
     print('peon-ping: rotation mode: ' + mode)
@@ -836,7 +874,7 @@ except Exception:
       random|round-robin|session_override|agentskill)
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -869,13 +907,13 @@ print('peon-ping: rotation mode set to ' + mode)
         fi
         python3 -c "
 import json, os, glob
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     _cfg_list = json.load(open(config_path))
     active = _cfg_list.get('default_pack', _cfg_list.get('active_pack', 'peon'))
 except Exception:
     active = 'peon'
-packs_dir = '$PEON_DIR/packs'
+packs_dir = '$PEON_DIR_PY/packs'
 for d in sorted(os.listdir(packs_dir)):
     for mname in ('openpeon.json', 'manifest.json'):
         mpath = os.path.join(packs_dir, d, mname)
@@ -918,9 +956,9 @@ for d in sorted(os.listdir(packs_dir)):
 
         PACK_ARG="$PACK_ARG" python3 -c "
 import json, os, glob, sys
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 pack_arg = os.environ.get('PACK_ARG', '')
-packs_dir = '$PEON_DIR/packs'
+packs_dir = '$PEON_DIR_PY/packs'
 names = sorted([
     d for d in os.listdir(packs_dir)
     if os.path.isdir(os.path.join(packs_dir, d)) and (
@@ -965,13 +1003,13 @@ print(f'peon-ping: switched to {pack_arg} ({display})')
       next)
         python3 -c "
 import json, os, glob
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
     cfg = {}
 active = cfg.get('default_pack', cfg.get('active_pack', 'peon'))
-packs_dir = '$PEON_DIR/packs'
+packs_dir = '$PEON_DIR_PY/packs'
 names = sorted([
     d for d in os.listdir(packs_dir)
     if os.path.isdir(os.path.join(packs_dir, d)) and (
@@ -1005,8 +1043,8 @@ print(f'peon-ping: switched to {next_pack} ({display})')
           PACKS_TO_REMOVE=$(python3 -c "
 import json, os, sys
 
-config_path = '$CONFIG'
-peon_dir = '$PEON_DIR'
+config_path = '$CONFIG_PY'
+peon_dir = '$PEON_DIR_PY'
 packs_dir = os.path.join(peon_dir, 'packs')
 
 try:
@@ -1034,8 +1072,8 @@ print(','.join(removable))
           PACKS_TO_REMOVE=$(REMOVE_ARG="$REMOVE_ARG" python3 -c "
 import json, os, sys
 
-config_path = '$CONFIG'
-peon_dir = '$PEON_DIR'
+config_path = '$CONFIG_PY'
+peon_dir = '$PEON_DIR_PY'
 packs_dir = os.path.join(peon_dir, 'packs')
 remove_arg = os.environ.get('REMOVE_ARG', '')
 
@@ -1100,8 +1138,8 @@ print(','.join(valid))
         python3 -c "
 import json, os, shutil
 
-config_path = '$CONFIG'
-peon_dir = '$PEON_DIR'
+config_path = '$CONFIG_PY'
+peon_dir = '$PEON_DIR_PY'
 packs_dir = os.path.join(peon_dir, 'packs')
 to_remove = '$PACKS_TO_REMOVE'.split(',')
 
@@ -1161,7 +1199,7 @@ import json, os, shutil, sys
 
 src = os.environ['LOCAL_SRC']
 force = os.environ.get('LOCAL_FORCE', '0') == '1'
-packs_dir = os.path.join('$PEON_DIR', 'packs')
+packs_dir = os.path.join('$PEON_DIR_PY', 'packs')
 
 manifest_name = 'openpeon.json' if os.path.exists(os.path.join(src, 'openpeon.json')) else 'manifest.json'
 if os.path.exists(os.path.join(src, manifest_name)):
@@ -1202,8 +1240,8 @@ print(f'Use peon packs use {pack_name} to activate it')
             ROT_ARG="$ROT_ARG" python3 -c "
 import json, os, sys
 
-config_path = '$GLOBAL_CONFIG'
-peon_dir = '$PEON_DIR'
+config_path = '$GLOBAL_CONFIG_PY'
+peon_dir = '$PEON_DIR_PY'
 packs_dir = os.path.join(peon_dir, 'packs')
 add_arg = os.environ.get('ROT_ARG', '')
 
@@ -1253,7 +1291,7 @@ print('Rotation: ' + ', '.join(rotation))
             ROT_ARG="$ROT_ARG" python3 -c "
 import json, os, sys
 
-config_path = '$GLOBAL_CONFIG'
+config_path = '$GLOBAL_CONFIG_PY'
 remove_arg = os.environ.get('ROT_ARG', '')
 
 try:
@@ -1288,7 +1326,7 @@ print('Rotation: ' + ', '.join(rotation))
           list|"")
             python3 -c "
 import json
-config_path = '$GLOBAL_CONFIG'
+config_path = '$GLOBAL_CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1332,7 +1370,7 @@ else:
         done
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1365,7 +1403,7 @@ json.dump(cfg, open(config_path, 'w'), indent=2)
         fi
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1389,7 +1427,7 @@ json.dump(cfg, open(config_path, 'w'), indent=2)
         fi
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1407,7 +1445,7 @@ json.dump(cfg, open(config_path, 'w'), indent=2)
       off)
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1422,7 +1460,7 @@ json.dump(cfg, open(config_path, 'w'), indent=2)
       on)
         python3 -c "
 import json
-config_path = '$CONFIG'
+config_path = '$CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1441,7 +1479,7 @@ print('peon-ping: mobile notifications enabled')
         python3 -c "
 import json
 try:
-    cfg = json.load(open('$CONFIG'))
+    cfg = json.load(open('$CONFIG_PY'))
     mn = cfg.get('mobile_notify', {})
 except Exception:
     mn = {}
@@ -1466,7 +1504,7 @@ else:
         python3 -c "
 import json, sys
 try:
-    cfg = json.load(open('$CONFIG'))
+    cfg = json.load(open('$CONFIG_PY'))
     mn = cfg.get('mobile_notify', {})
 except Exception:
     mn = {}
@@ -1519,8 +1557,8 @@ print('service=' + mn.get('service', ''))
       python3 -c "
 import json, os, sys
 
-peon_dir = '$PEON_DIR'
-config_path = '$CONFIG'
+peon_dir = '$PEON_DIR_PY'
+config_path = '$CONFIG_PY'
 
 try:
     cfg = json.load(open(config_path))
@@ -1558,8 +1596,8 @@ for cat in sorted(categories):
     PREVIEW_OUTPUT=$(python3 -c "
 import json, os, sys
 
-peon_dir = '$PEON_DIR'
-config_path = '$CONFIG'
+peon_dir = '$PEON_DIR_PY'
+config_path = '$CONFIG_PY'
 
 # Load config
 try:
@@ -1645,7 +1683,7 @@ for i, s in enumerate(sounds):
     # Migrate config keys (active_pack → default_pack, agentskill → session_override)
     python3 -c "
 import json, os
-config_path = '$GLOBAL_CONFIG'
+config_path = '$GLOBAL_CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1741,7 +1779,7 @@ HELPEOF
       on)
         python3 -c "
 import json
-config_path = '$GLOBAL_CONFIG'
+config_path = '$GLOBAL_CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1762,7 +1800,7 @@ json.dump(cfg, open(config_path, 'w'), indent=2)
       off)
         python3 -c "
 import json
-config_path = '$GLOBAL_CONFIG'
+config_path = '$GLOBAL_CONFIG_PY'
 try:
     cfg = json.load(open(config_path))
 except Exception:
@@ -1778,8 +1816,8 @@ json.dump(cfg, open(config_path, 'w'), indent=2)
         python3 -c "
 import json, datetime, sys
 
-config_path = '$CONFIG'
-state_path = '$STATE'
+config_path = '$CONFIG_PY'
+state_path = '$STATE_PY'
 
 try:
     cfg = json.load(open(config_path))
@@ -1840,8 +1878,8 @@ for ex, goal in exercises.items():
         python3 -c "
 import json, datetime, sys
 
-config_path = '$CONFIG'
-state_path = '$STATE'
+config_path = '$CONFIG_PY'
+state_path = '$STATE_PY'
 count = int('$COUNT')
 exercise = '$EXERCISE'
 
@@ -1903,7 +1941,7 @@ print(f'  {bar}  {int(pct*100)}%')
         python3 -c "
 import json, sys
 
-config_path = '$GLOBAL_CONFIG'
+config_path = '$GLOBAL_CONFIG_PY'
 arg1 = '$ARG1'
 arg2 = '$ARG2'
 
@@ -1994,9 +2032,9 @@ eval "$(python3 -c "
 import sys, json, os, re, random, time, shlex
 q = shlex.quote
 
-config_path = '$CONFIG'
-state_file = '$STATE'
-peon_dir = '$PEON_DIR'
+config_path = '$CONFIG_PY'
+state_file = '$STATE_PY'
+peon_dir = '$PEON_DIR_PY'
 paused = '$PAUSED' == 'true'
 agent_modes = {'delegate'}
 state_dirty = False
