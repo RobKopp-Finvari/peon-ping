@@ -104,7 +104,8 @@ JSON
     "user.spam": true
   },
   "annoyed_threshold": 3,
-  "annoyed_window_seconds": 10
+  "annoyed_window_seconds": 10,
+  "session_start_cooldown_seconds": 0
 }
 JSON
 
