@@ -191,6 +191,9 @@ CONFIG_FILE = os.path.join(PEON_DIR, "config.json")
 STATE_FILE = os.path.join(PEON_DIR, ".state.json")
 REMOTE_STATE_FILE = os.path.join(PEON_DIR, ".remote_state.json")
 
+active_sessions = {}  # session_id → time.time() when UserPromptSubmit received
+SESSION_KEEPALIVE_S = 600  # safety timeout
+
 # Build list of allowed path prefixes (PEON_DIR + any symlink targets within it)
 ALLOWED_PREFIXES = [PEON_DIR + os.sep]
 for entry in os.listdir(PEON_DIR):
@@ -542,12 +545,28 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(400, "Missing session_id in last_active")
                 return
             sessions = state.get("sessions", {})
+            event_name = last_active.get("event", "")
+            now = time.time()
+
+            # Keepalive: refresh timestamps for parent sessions still processing
+            for sid in list(active_sessions):
+                if now - active_sessions[sid] < SESSION_KEEPALIVE_S:
+                    if sid in sessions:
+                        sessions[sid] = {**sessions[sid], "timestamp": now}
+                else:
+                    del active_sessions[sid]  # safety expire
+
+            # Track active sessions
+            if event_name == "UserPromptSubmit":
+                active_sessions[session_id] = now
+            elif event_name in ("Stop", "SessionEnd"):
+                active_sessions.pop(session_id, None)
+
             if last_active.get("event") == "SessionEnd":
                 sessions.pop(session_id, None)
             else:
                 sessions[session_id] = last_active
             # Prune sessions inactive for more than 10 min
-            now = time.time()
             sessions = {sid: s for sid, s in sessions.items() if now - s.get("timestamp", 0) < 600}
             state["sessions"] = sessions
             tmp = REMOTE_STATE_FILE + ".tmp"
