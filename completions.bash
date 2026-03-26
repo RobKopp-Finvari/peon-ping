@@ -56,9 +56,26 @@ _peon_completions() {
           COMPREPLY=( $(compgen -W "random round-robin agentskill" -- "$cur") )
         fi
         return 0 ;;
+      status)
+        if [ "$cword" -eq 2 ]; then
+          COMPREPLY=( $(compgen -W "--verbose" -- "$cur") )
+        fi
+        return 0 ;;
       mobile)
         if [ "$cword" -eq 2 ]; then
           COMPREPLY=( $(compgen -W "ntfy pushover telegram on off status test" -- "$cur") )
+        fi
+        return 0 ;;
+      debug)
+        if [ "$cword" -eq 2 ]; then
+          COMPREPLY=( $(compgen -W "on off status" -- "$cur") )
+        fi
+        return 0 ;;
+      logs)
+        if [ "$cword" -eq 2 ]; then
+          COMPREPLY=( $(compgen -W "--last --session --prune --clear" -- "$cur") )
+        elif [ "$cword" -eq 4 ] && [ "${words[2]}" = "--session" ]; then
+          COMPREPLY=( $(compgen -W "--all" -- "$cur") )
         fi
         return 0 ;;
     esac
@@ -66,7 +83,7 @@ _peon_completions() {
   fi
 
   # Top-level commands
-  COMPREPLY=( $(compgen -W "pause resume mute unmute toggle status volume rotation packs notifications mobile relay help" -- "$cur") )
+  COMPREPLY=( $(compgen -W "pause resume mute unmute toggle status volume rotation packs notifications mobile relay debug logs help" -- "$cur") )
   return 0
 }
 

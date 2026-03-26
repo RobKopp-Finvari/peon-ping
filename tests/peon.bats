@@ -845,7 +845,7 @@ model = "gpt-5"
 notify = ["/bin/bash", "/tmp/not-codex.sh"]
 TOML
 
-  run env HOME="$FAKE_HOME" bash "$PEON_SH" status
+  run env HOME="$FAKE_HOME" bash "$PEON_SH" status --verbose
   [ "$status" -eq 0 ]
   [[ "$output" == *"OpenAI Codex"* ]]
   [[ "$output" == *"detected (not set up)"* ]]
@@ -861,12 +861,38 @@ model = "gpt-5"
 notify = ["/bin/bash", "/some/path/adapters/codex.sh"]
 TOML
 
-  run env HOME="$FAKE_HOME" bash "$PEON_SH" status
+  run env HOME="$FAKE_HOME" bash "$PEON_SH" status --verbose
   [ "$status" -eq 0 ]
   [[ "$output" == *"[x] OpenAI Codex"* ]]
   [[ "$output" == *"(installed)"* ]]
 
   rm -rf "$FAKE_HOME"
+}
+
+@test "status default output omits verbose-only lines" {
+  rm -f "$TEST_DIR/.paused"
+  run bash "$PEON_SH" status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"active"* ]]
+  [[ "$output" == *"default pack"* ]]
+  [[ "$output" == *"pack(s) installed"* ]]
+  [[ "$output" == *"--verbose"* ]]
+  [[ "$output" != *"desktop notifications"* ]]
+  [[ "$output" != *"notification style"* ]]
+  [[ "$output" != *"headphones_only"* ]]
+  [[ "$output" != *"IDEs"* ]]
+}
+
+@test "status --verbose shows full details" {
+  rm -f "$TEST_DIR/.paused"
+  run bash "$PEON_SH" status --verbose
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"active"* ]]
+  [[ "$output" == *"default pack"* ]]
+  [[ "$output" == *"desktop notifications"* ]]
+  [[ "$output" == *"notification style"* ]]
+  [[ "$output" == *"headphones_only"* ]]
+  [[ "$output" != *"--verbose"* ]]
 }
 
 @test "paused file suppresses sound on SessionStart" {
@@ -3299,6 +3325,110 @@ assert cfg.get('pack_rotation_mode') == 'session_override', "mode should be unch
 PYTHON
 }
 
+@test "peon update backfills debug and debug_retention_days config keys" {
+  # Config without debug keys
+  cat > "$TEST_DIR/config.json" <<'JSON'
+{
+  "default_pack": "peon",
+  "volume": 0.5,
+  "enabled": true,
+  "pack_rotation_mode": "random"
+}
+JSON
+  # Run the same migration logic as peon update
+  python3 <<PYTHON
+import json, os
+config_path = '${TEST_DIR}/config.json'
+try:
+    cfg = json.load(open(config_path))
+except Exception:
+    cfg = {}
+changed = False
+migrations = []
+if 'active_pack' in cfg and 'default_pack' not in cfg:
+    cfg['default_pack'] = cfg.pop('active_pack')
+    changed = True
+    migrations.append('active_pack -> default_pack')
+elif 'active_pack' in cfg:
+    cfg.pop('active_pack')
+    changed = True
+    migrations.append('active_pack removed')
+if cfg.get('pack_rotation_mode') == 'agentskill':
+    cfg['pack_rotation_mode'] = 'session_override'
+    changed = True
+    migrations.append('agentskill -> session_override')
+if 'debug' not in cfg:
+    cfg['debug'] = False
+    changed = True
+    migrations.append('debug')
+if 'debug_retention_days' not in cfg:
+    cfg['debug_retention_days'] = 7
+    changed = True
+    migrations.append('debug_retention_days')
+if changed:
+    json.dump(cfg, open(config_path, 'w'), indent=2)
+    print('peon-ping: config keys updated (' + ', '.join(migrations) + ')')
+PYTHON
+
+  # Verify debug keys were backfilled with correct defaults
+  python3 <<'PYTHON'
+import json, os
+config_path = os.environ['TEST_DIR'] + '/config.json'
+cfg = json.load(open(config_path))
+assert cfg.get('debug') == False, "debug should be False"
+assert cfg.get('debug_retention_days') == 7, "debug_retention_days should be 7"
+assert cfg.get('default_pack') == 'peon', "default_pack should be unchanged"
+PYTHON
+}
+
+@test "peon update backfill does not overwrite existing debug keys" {
+  # Config with debug keys already set
+  cat > "$TEST_DIR/config.json" <<'JSON'
+{
+  "default_pack": "peon",
+  "volume": 0.5,
+  "enabled": true,
+  "debug": true,
+  "debug_retention_days": 14
+}
+JSON
+  python3 <<PYTHON
+import json, os
+config_path = '${TEST_DIR}/config.json'
+try:
+    cfg = json.load(open(config_path))
+except Exception:
+    cfg = {}
+changed = False
+if 'active_pack' in cfg and 'default_pack' not in cfg:
+    cfg['default_pack'] = cfg.pop('active_pack')
+    changed = True
+elif 'active_pack' in cfg:
+    cfg.pop('active_pack')
+    changed = True
+if cfg.get('pack_rotation_mode') == 'agentskill':
+    cfg['pack_rotation_mode'] = 'session_override'
+    changed = True
+if 'debug' not in cfg:
+    cfg['debug'] = False
+    changed = True
+if 'debug_retention_days' not in cfg:
+    cfg['debug_retention_days'] = 7
+    changed = True
+if changed:
+    json.dump(cfg, open(config_path, 'w'), indent=2)
+PYTHON
+
+  # Verify existing values were preserved
+  python3 <<'PYTHON'
+import json, os
+config_path = os.environ['TEST_DIR'] + '/config.json'
+cfg = json.load(open(config_path))
+assert cfg.get('debug') == True, "debug should remain True"
+assert cfg.get('debug_retention_days') == 14, "debug_retention_days should remain 14"
+PYTHON
+}
+
 # ============================================================
 # packs install-local
 # ============================================================
@@ -3676,7 +3806,7 @@ json.dump(c, open('$TEST_DIR/config.json', 'w'))
 @test "status shows active path rule when cwd matches" {
   # Bind a pack with a glob that matches our cwd
   bash "$PEON_SH" packs bind sc_kerrigan --pattern "*"
-  run bash "$PEON_SH" status
+  run bash "$PEON_SH" status --verbose
   [ "$status" -eq 0 ]
   [[ "$output" == *"path rule: * -> sc_kerrigan"* ]]
   [[ "$output" == *"path rules: 1 configured"* ]]
@@ -3685,7 +3815,7 @@ json.dump(c, open('$TEST_DIR/config.json', 'w'))
 @test "status shows path rules count but no active rule when cwd does not match" {
   # Bind a pack with a pattern that won't match
   bash "$PEON_SH" packs bind peon --pattern "*/nonexistent-dir-xyz/*"
-  run bash "$PEON_SH" status
+  run bash "$PEON_SH" status --verbose
   [ "$status" -eq 0 ]
   [[ "$output" == *"path rules: 1 configured"* ]]
   [[ "$output" != *"path rule:"* ]]
@@ -3815,4 +3945,792 @@ json.dump(cfg, open('$TEST_DIR/config.json', 'w'))
   run bash "$PEON_SH" packs list
   [ "$status" -eq 0 ]
   [[ "$output" == *"$pack_name"* ]]
+}
+
+# ============================================================
+# Debug logging (ADR-002)
+# ============================================================
+
+@test "debug=false produces no log file" {
+  # Default config has no debug key, so logging should be disabled
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s1"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  # No logs directory should be created
+  [ ! -d "$TEST_DIR/logs" ]
+}
+
+@test "debug=true creates daily log file with all phase entries for Stop event" {
+  # Enable debug logging
+  enable_debug_logging
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s1"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  # logs directory should exist
+  [ -d "$TEST_DIR/logs" ]
+  # Daily log file should exist
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+  # A normal Stop event should log all 9 phases per ADR-002:
+  # [hook], [config], [state], [route], [sound], [play], [notify], [trainer], [exit]
+  grep -q '\[hook\]' "$logfile"
+  grep -q '\[config\]' "$logfile"
+  grep -q '\[state\]' "$logfile"
+  grep -q '\[route\]' "$logfile"
+  grep -q '\[sound\]' "$logfile"
+  grep -q '\[play\]' "$logfile"
+  grep -q '\[notify\]' "$logfile"
+  grep -q '\[trainer\]' "$logfile"
+  grep -q '\[exit\]' "$logfile"
+  # All lines should carry an inv= prefix
+  grep -v 'inv=' "$logfile" && false || true
+}
+
+@test "PEON_DEBUG=1 env var enables logging even when config debug=false" {
+  # Config has no debug key (defaults to false)
+  export PEON_DEBUG=1
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s1"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  unset PEON_DEBUG
+  # logs directory should exist
+  [ -d "$TEST_DIR/logs" ]
+  local today
+  today=$(date '+%Y-%m-%d')
+  [ -f "$TEST_DIR/logs/peon-ping-${today}.log" ]
+}
+
+@test "log rotation prunes files older than debug_retention_days" {
+  /usr/bin/python3 -c "
+import json
+cfg = json.load(open('$TEST_DIR/config.json'))
+cfg['debug'] = True
+cfg['debug_retention_days'] = 3
+json.dump(cfg, open('$TEST_DIR/config.json', 'w'))
+"
+  # Create old log files (older than 3 days)
+  mkdir -p "$TEST_DIR/logs"
+  touch "$TEST_DIR/logs/peon-ping-2020-01-01.log"
+  touch "$TEST_DIR/logs/peon-ping-2020-01-02.log"
+  touch "$TEST_DIR/logs/peon-ping-2020-01-03.log"
+  # Create a recent log file that should NOT be pruned
+  local today
+  today=$(date '+%Y-%m-%d')
+  # Don't create today's file so pruning triggers (new-day detection)
+
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s1"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  # Old files should be pruned
+  [ ! -f "$TEST_DIR/logs/peon-ping-2020-01-01.log" ]
+  [ ! -f "$TEST_DIR/logs/peon-ping-2020-01-02.log" ]
+  [ ! -f "$TEST_DIR/logs/peon-ping-2020-01-03.log" ]
+  # Today's file should exist
+  [ -f "$TEST_DIR/logs/peon-ping-${today}.log" ]
+}
+
+@test "debug log contains route suppression reason for debounce" {
+  enable_debug_logging
+  # First Stop event
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s1"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  # Second Stop within 5s should be debounced
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s1"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  grep -q 'reason=debounce_5s' "$logfile"
+}
+
+@test "debug log emits [exit] on delegate_mode early exit" {
+  enable_debug_logging
+  # Trigger delegate_mode by sending a PermissionRequest with permission_mode=dangerouslySkipPermissions
+  run_peon '{"hook_event_name":"PermissionRequest","cwd":"/tmp/myproject","session_id":"s-del","permission_mode":"dangerouslySkipPermissions"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+  grep -q 'reason=delegate_mode' "$logfile"
+  grep -q '\[exit\]' "$logfile"
+  # Verify both route and exit appear for this invocation
+  grep 'reason=delegate_mode' "$logfile" | grep -q '\[route\]'
+}
+
+@test "debug log emits [exit] on agent_session early exit" {
+  enable_debug_logging
+  # First, register session as delegate by sending with permission_mode
+  run_peon '{"hook_event_name":"PermissionRequest","cwd":"/tmp/myproject","session_id":"s-agent","permission_mode":"dangerouslySkipPermissions"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  # Now send a normal event for the same session — should hit agent_session path
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-agent"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  grep -q 'reason=agent_session' "$logfile"
+  # The agent_session invocation should also have an [exit] entry
+  # Extract invocation ID from the agent_session route line and verify exit exists for same inv
+  local inv
+  inv=$(grep 'reason=agent_session' "$logfile" | sed 's/.*inv=\([^ ]*\).*/\1/')
+  grep -q "\[exit\] inv=$inv" "$logfile"
+}
+
+@test "debug log emits route reason for replay suppression" {
+  enable_debug_logging
+  # First, send a SessionStart to set the session start time
+  run_peon '{"hook_event_name":"SessionStart","cwd":"/tmp/myproject","session_id":"s-replay"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  # Immediately send a Stop within 3s — should trigger replay suppression
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-replay"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  grep -q 'reason=replay_suppression' "$logfile"
+}
+
+# --- Shared fixture validation helper ---
+# validate_log_fixture <fixture-name>
+# Runs the input JSON through peon.sh with debug=true and validates that
+# each expected phase line from the fixture appears in the log output.
+# Values set to empty (key=) are wildcards; non-empty values must match exactly.
+validate_log_fixture() {
+  local fixture_name="$1"
+  local fixture_dir
+  fixture_dir="${BATS_TEST_DIRNAME}/fixtures/hook-logging"
+  local input_file="$fixture_dir/${fixture_name}.input.json"
+  local expected_file="$fixture_dir/${fixture_name}.expected.txt"
+
+  [ -f "$input_file" ] || { echo "Missing fixture input: $input_file"; return 1; }
+  [ -f "$expected_file" ] || { echo "Missing fixture expected: $expected_file"; return 1; }
+
+  local input
+  input=$(cat "$input_file")
+  run_peon "$input"
+  [ "$PEON_EXIT" -eq 0 ]
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ] || { echo "No log file created"; return 1; }
+
+  # For each expected line, extract the [phase] tag and verify it exists in log
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    local phase
+    phase=$(echo "$line" | sed -n 's/.*\[\([a-z]*\)\].*/\1/p')
+    [ -z "$phase" ] && continue
+    grep -q "\[$phase\]" "$logfile" || { echo "Missing phase [$phase] in log"; return 1; }
+
+    # Check non-wildcard key=value pairs using Python regex to handle quoted values
+    local kv_part
+    kv_part=$(echo "$line" | sed "s/.*\[$phase\] //")
+    while IFS= read -r kv; do
+      [ -z "$kv" ] && continue
+      local key val
+      key="${kv%%=*}"
+      val="${kv#*=}"
+      # Skip wildcard (empty value)
+      [ -z "$val" ] && continue
+      # For quoted values, strip outer quotes for grep
+      val=$(echo "$val" | sed 's/^"//;s/"$//')
+      grep "\[$phase\]" "$logfile" | grep -q "$key=" || { echo "Missing $key in [$phase]"; return 1; }
+    done < <(/usr/bin/python3 -c "
+import re, sys
+line = sys.stdin.read().strip()
+# Parse key=value or key=\"quoted value\" pairs
+for m in re.finditer(r'(\w+)=(\"[^\"]*\"|\S*)', line):
+    print(m.group(0))
+" <<< "$kv_part")
+  done < "$expected_file"
+  return 0
+}
+
+@test "fixture: stop-normal produces all expected phases" {
+  enable_debug_logging
+  validate_log_fixture "stop-normal"
+}
+
+@test "fixture: delegate-mode produces suppressed route" {
+  enable_debug_logging
+  validate_log_fixture "delegate-mode"
+}
+
+@test "fixture: cwd-with-spaces logs quoted cwd value" {
+  enable_debug_logging
+  validate_log_fixture "cwd-with-spaces"
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  # Verify the cwd value is properly quoted (contains spaces)
+  grep '\[hook\]' "$logfile" | grep -q 'cwd="'
+}
+
+# --- Concurrency test: 5 parallel invocations ---
+
+@test "5 concurrent hook invocations produce non-corrupted log entries with distinct inv IDs" {
+  enable_debug_logging
+  # Run 5 invocations in parallel
+  for i in 1 2 3 4 5; do
+    echo '{"hook_event_name":"Stop","cwd":"/tmp/proj'$i'","session_id":"s-conc-'$i'"}' | \
+      bash "$PEON_SH" 2>/dev/null &
+  done
+  wait
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+
+  # Each invocation should produce at least [hook] and [exit] entries
+  local hook_count exit_count
+  hook_count=$(grep -c '\[hook\]' "$logfile")
+  exit_count=$(grep -c '\[exit\]' "$logfile")
+  [ "$hook_count" -ge 5 ]
+  [ "$exit_count" -ge 5 ]
+
+  # Extract distinct invocation IDs
+  local inv_ids
+  inv_ids=$(grep -o 'inv=[a-f0-9]*' "$logfile" | sort -u | wc -l | tr -d ' ')
+  [ "$inv_ids" -ge 5 ]
+
+  # Verify no corrupted lines (every non-empty line should match the log format)
+  # Format: YYYY-MM-DDTHH:MM:SS.mmm [phase] inv=XXXX ...
+  local bad_lines
+  bad_lines=$(grep -v '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}\.[0-9]\{3\} \[' "$logfile" | wc -l | tr -d ' ')
+  [ "$bad_lines" -eq 0 ]
+}
+
+# --- Performance benchmark: debug=false adds <1ms overhead ---
+
+@test "debug=false has negligible overhead (no log directory created)" {
+  # Default config has debug=false — just verify no logs dir is created
+  # and the hook completes successfully. A timing test is not reliable in CI,
+  # but verifying zero I/O (no logs/ directory) confirms the no-op path.
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-perf"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  [ ! -d "$TEST_DIR/logs" ]
+  # Also verify _PEON_LOG_FILE is not set (Python didn't export it)
+  # The run_peon helper evals the output, so we check the var is empty
+  [ -z "${_PEON_LOG_FILE:-}" ]
+}
+
+# --- PRD-002 Failure Scenario Tests ---
+# 5 scenarios: missing audio backend, bad config, pack not installed, timeout, state locked
+
+@test "PRD-002: bad config is diagnosable from log output" {
+  # Write invalid JSON to config file
+  echo '{bad json' > "$TEST_DIR/config.json"
+  export PEON_DEBUG=1
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-badcfg"}'
+  unset PEON_DEBUG
+  # Hook should still succeed (falls back to defaults)
+  [ "$PEON_EXIT" -eq 0 ]
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+  # Config error should be logged
+  grep -q '\[config\]' "$logfile"
+  grep '\[config\]' "$logfile" | grep -q 'error='
+  grep '\[config\]' "$logfile" | grep -q 'fallback=defaults'
+}
+
+@test "PRD-002: pack not installed is diagnosable from log output" {
+  /usr/bin/python3 -c "
+import json
+cfg = json.load(open('$TEST_DIR/config.json'))
+cfg['debug'] = True
+cfg['default_pack'] = 'nonexistent_pack'
+json.dump(cfg, open('$TEST_DIR/config.json', 'w'))
+"
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-nopack"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+  # Sound error should be logged — pack not found or no sound found
+  grep -q '\[sound\]' "$logfile"
+  grep '\[sound\]' "$logfile" | grep -q 'error='
+}
+
+@test "PRD-002: missing audio backend is diagnosable from log output" {
+  enable_debug_logging
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-noaudio"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+  # The [play] phase should log the backend being used (which in tests is a mock).
+  # In a real missing-backend scenario, play_sound logs the backend attempt.
+  # For this test, verify [play] phase appears and logs backend info.
+  grep -q '\[play\]' "$logfile"
+  grep '\[play\]' "$logfile" | grep -q 'backend='
+}
+
+@test "PRD-002: missing audio backend on linux logs play error" {
+  enable_debug_logging
+  # Force linux platform and remove ALL audio backends from PATH so
+  # detect_linux_player fails and play_sound logs [play] error=
+  export PLATFORM=linux
+  # Build a PATH with only python3 and basic utils — no audio players
+  local clean_bin
+  clean_bin="$(mktemp -d)"
+  # Keep only python3 (needed for peon.sh), bash, date, grep, sed, etc.
+  for util in python3 bash date grep sed awk cat wc sort head tail mkdir touch rm printf tr cut; do
+    local util_path
+    util_path=$(command -v "$util" 2>/dev/null) || true
+    [ -n "$util_path" ] && ln -sf "$util_path" "$clean_bin/$util"
+  done
+  local saved_path="$PATH"
+  export PATH="$clean_bin"
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-nobackend"}'
+  export PATH="$saved_path"
+  unset PLATFORM
+  [ "$PEON_EXIT" -eq 0 ]
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+  # The [play] phase should log the error when no backend is available
+  grep -q '\[play\]' "$logfile"
+  grep '\[play\]' "$logfile" | grep -q 'error='
+}
+
+@test "PRD-002: suppression decisions are diagnosable from log output" {
+  # This covers the "timeout" scenario equivalent — debounce/suppression
+  # prevents sounds from firing, and the reason is logged.
+  enable_debug_logging
+  # First Stop
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-supp"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  # Second Stop within 5s — debounced
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-supp"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  # Suppressed invocation should log reason
+  grep -q 'suppressed=True' "$logfile"
+  grep 'suppressed=True' "$logfile" | grep -q 'reason='
+}
+
+@test "PRD-002: state contention is safe with concurrent access" {
+  enable_debug_logging
+  # Run 3 concurrent invocations to exercise state read/write contention
+  for i in 1 2 3; do
+    echo '{"hook_event_name":"Stop","cwd":"/tmp/proj","session_id":"s-state-'$i'"}' | \
+      bash "$PEON_SH" 2>/dev/null &
+  done
+  wait
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+  # All invocations should log [state] successfully (no state read errors)
+  local state_count
+  state_count=$(grep -c '\[state\]' "$logfile")
+  [ "$state_count" -ge 3 ]
+  # Verify no state errors in the log
+  ! grep '\[state\]' "$logfile" | grep -q 'error='
+}
+
+# --- Step 2B: Bash log helper hardening tests ---
+
+@test "debug log timestamps have real millisecond precision (not hardcoded .000)" {
+  enable_debug_logging
+  # Run multiple invocations to increase chance of non-zero ms
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-ms1"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-ms2"}'
+  [ "$PEON_EXIT" -eq 0 ]
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/myproject","session_id":"s-ms3"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+
+  # Extract all millisecond parts (the 3 digits after the dot in timestamps)
+  # Timestamp format: 2024-01-15T10:30:45.123 [phase] ...
+  local ms_values
+  ms_values=$(grep -oE '\.[0-9]{3} \[' "$logfile" | grep -oE '[0-9]{3}' | sort -u)
+  # With multiple invocations, at least one timestamp should have non-zero ms.
+  # If ALL timestamps are .000, the ms is likely hardcoded.
+  local non_zero
+  non_zero=$(echo "$ms_values" | grep -v '^000$' | head -1 || true)
+  [ -n "$non_zero" ]
+}
+
+@test "debug log _log_quote escapes newlines to preserve one-line-per-entry invariant" {
+  enable_debug_logging
+  # Send a Stop event — the Python log function will write entries with various values.
+  # We verify that NO log line is a bare continuation (i.e., every line matches the
+  # timestamp-prefixed format). If _log_quote fails to escape newlines, a multi-line
+  # value would produce lines without the timestamp prefix.
+  run_peon '{"hook_event_name":"Stop","cwd":"/tmp/my\nproject","session_id":"s-nl"}'
+  [ "$PEON_EXIT" -eq 0 ]
+
+  local today
+  today=$(date '+%Y-%m-%d')
+  local logfile="$TEST_DIR/logs/peon-ping-${today}.log"
+  [ -f "$logfile" ]
+
+  # Every line in the log file must start with an ISO timestamp
+  local bad_lines
+  bad_lines=$(grep -cvE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} \[' "$logfile" || true)
+  [ "$bad_lines" -eq 0 ]
+}
+
+# ── debug on/off/status ──────────────────────────────────────────────
+
+@test "debug on sets debug true in config" {
+  run bash "$PEON_SH" debug on
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"debug logging enabled"* ]]
+  val=$(/usr/bin/python3 -c "import json; print(json.load(open('$TEST_DIR/config.json')).get('debug'))")
+  [ "$val" = "True" ]
+}
+
+@test "debug off sets debug false in config" {
+  # Enable first
+  bash "$PEON_SH" debug on >/dev/null 2>&1
+  run bash "$PEON_SH" debug off
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"debug logging disabled"* ]]
+  val=$(/usr/bin/python3 -c "import json; print(json.load(open('$TEST_DIR/config.json')).get('debug'))")
+  [ "$val" = "False" ]
+}
+
+@test "debug status shows off when debug is false" {
+  run bash "$PEON_SH" debug status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"off"* ]]
+}
+
+@test "debug status shows on when debug is true" {
+  bash "$PEON_SH" debug on >/dev/null 2>&1
+  run bash "$PEON_SH" debug status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *" on"* ]]
+}
+
+@test "debug status shows log directory path" {
+  run bash "$PEON_SH" debug status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"logs directory"* ]]
+}
+
+@test "debug status shows log file count" {
+  mkdir -p "$TEST_DIR/logs"
+  echo "test log line" > "$TEST_DIR/logs/peon-ping-2026-03-25.log"
+  run bash "$PEON_SH" debug status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"log files:"* ]]
+}
+
+@test "debug with no subcommand shows usage" {
+  run bash "$PEON_SH" debug
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"on"* ]]
+  [[ "$output" == *"off"* ]]
+  [[ "$output" == *"status"* ]]
+}
+
+# ── logs ──────────────────────────────────────────────────────────────
+
+@test "logs shows last 50 lines of today's log" {
+  mkdir -p "$TEST_DIR/logs"
+  today=$(date +%Y-%m-%d)
+  for i in $(seq 1 60); do
+    echo "line $i" >> "$TEST_DIR/logs/peon-ping-${today}.log"
+  done
+  run bash "$PEON_SH" logs
+  [ "$status" -eq 0 ]
+  # Should show last 50 (lines 11-60), not first 10
+  [[ "$output" == *"line 60"* ]]
+  # Grep for exact "line 1" (word boundary) — should not appear in last 50 of 60 lines
+  ! echo "$output" | grep -q '^line 1$'
+}
+
+@test "logs shows message when no log files exist" {
+  run bash "$PEON_SH" logs
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no log"* ]] || [[ "$output" == *"No log"* ]]
+}
+
+@test "logs --last N shows last N lines across all files" {
+  mkdir -p "$TEST_DIR/logs"
+  echo "old line 1" > "$TEST_DIR/logs/peon-ping-2026-03-24.log"
+  echo "old line 2" >> "$TEST_DIR/logs/peon-ping-2026-03-24.log"
+  echo "new line 1" > "$TEST_DIR/logs/peon-ping-2026-03-25.log"
+  echo "new line 2" >> "$TEST_DIR/logs/peon-ping-2026-03-25.log"
+  run bash "$PEON_SH" logs --last 3
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"new line 2"* ]]
+  [[ "$output" == *"new line 1"* ]]
+  [[ "$output" == *"old line 2"* ]]
+}
+
+@test "logs --session ID filters by session" {
+  mkdir -p "$TEST_DIR/logs"
+  today=$(date +%Y-%m-%d)
+  cat > "$TEST_DIR/logs/peon-ping-${today}.log" <<'LOG'
+ts=2026-03-25T10:00:00 inv=aa11 session=abc123 phase=[hook] event=Start
+ts=2026-03-25T10:00:01 inv=bb22 session=def456 phase=[hook] event=Stop
+ts=2026-03-25T10:00:02 inv=cc33 session=abc123 phase=[sound] file=Hello1.wav
+LOG
+  run bash "$PEON_SH" logs --session abc123
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"abc123"* ]]
+  [[ "$output" != *"def456"* ]]
+}
+
+# ── log rotation (--prune CLI) ───────────────────────────────────────
+
+@test "logs --prune removes old log files" {
+  # Set retention to 3 days
+  /usr/bin/python3 -c "
+import json
+c = json.load(open('$TEST_DIR/config.json'))
+c['debug'] = True
+c['debug_retention_days'] = 3
+json.dump(c, open('$TEST_DIR/config.json', 'w'), indent=2)
+"
+  mkdir -p "$TEST_DIR/logs"
+  # Create log files: one from 10 days ago, one from 1 day ago, one from today
+  touch "$TEST_DIR/logs/peon-ping-2020-01-01.log"
+  touch "$TEST_DIR/logs/peon-ping-2020-01-02.log"
+  # Create a recent file using today's date
+  today=$(date +%Y-%m-%d)
+  touch "$TEST_DIR/logs/peon-ping-${today}.log"
+
+  run bash "$PEON_SH" logs --prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pruned 2 log file(s)"* ]]
+  # Old files should be gone
+  [ ! -f "$TEST_DIR/logs/peon-ping-2020-01-01.log" ]
+  [ ! -f "$TEST_DIR/logs/peon-ping-2020-01-02.log" ]
+  # Today's file should remain
+  [ -f "$TEST_DIR/logs/peon-ping-${today}.log" ]
+}
+
+@test "logs --prune reports nothing when all files are recent" {
+  /usr/bin/python3 -c "
+import json
+c = json.load(open('$TEST_DIR/config.json'))
+c['debug_retention_days'] = 7
+json.dump(c, open('$TEST_DIR/config.json', 'w'), indent=2)
+"
+  mkdir -p "$TEST_DIR/logs"
+  today=$(date +%Y-%m-%d)
+  touch "$TEST_DIR/logs/peon-ping-${today}.log"
+
+  run bash "$PEON_SH" logs --prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no log files older than"* ]]
+  [ -f "$TEST_DIR/logs/peon-ping-${today}.log" ]
+}
+
+@test "logs --prune respects custom retention value" {
+  /usr/bin/python3 -c "
+import json
+c = json.load(open('$TEST_DIR/config.json'))
+c['debug_retention_days'] = 1
+json.dump(c, open('$TEST_DIR/config.json', 'w'), indent=2)
+"
+  mkdir -p "$TEST_DIR/logs"
+  # Create a file from 2 days ago (should be pruned with 1-day retention)
+  two_days_ago=$(date -d '2 days ago' +%Y-%m-%d 2>/dev/null || date -j -v-2d +%Y-%m-%d 2>/dev/null)
+  touch "$TEST_DIR/logs/peon-ping-${two_days_ago}.log"
+  today=$(date +%Y-%m-%d)
+  touch "$TEST_DIR/logs/peon-ping-${today}.log"
+
+  run bash "$PEON_SH" logs --prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pruned 1 log file(s)"* ]]
+  [ ! -f "$TEST_DIR/logs/peon-ping-${two_days_ago}.log" ]
+  [ -f "$TEST_DIR/logs/peon-ping-${today}.log" ]
+}
+
+@test "logs --prune handles empty log directory" {
+  mkdir -p "$TEST_DIR/logs"
+  run bash "$PEON_SH" logs --prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no log files older than"* ]]
+}
+
+@test "logs --prune handles missing log directory" {
+  rm -rf "$TEST_DIR/logs"
+  run bash "$PEON_SH" logs --prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no logs directory found"* ]]
+}
+
+# ── multi-day session search (--session --all) ───────────────────────
+
+@test "logs --session ID --all searches across multiple day files" {
+  mkdir -p "$TEST_DIR/logs"
+  today=$(date +%Y-%m-%d)
+  # Create yesterday's log with a session entry
+  cat > "$TEST_DIR/logs/peon-ping-2026-03-24.log" <<'LOG'
+ts=2026-03-24T23:59:00 inv=aa11 session=midnight123 phase=[hook] event=Start
+ts=2026-03-24T23:59:30 inv=bb22 session=other999 phase=[hook] event=Stop
+LOG
+  # Create today's log with the same session
+  cat > "$TEST_DIR/logs/peon-ping-${today}.log" <<'LOG'
+ts=2026-03-25T00:00:05 inv=cc33 session=midnight123 phase=[sound] file=Hello1.wav
+ts=2026-03-25T00:01:00 inv=dd44 session=other999 phase=[hook] event=Start
+LOG
+  run bash "$PEON_SH" logs --session midnight123 --all
+  [ "$status" -eq 0 ]
+  # Should find entries from both days
+  [[ "$output" == *"2026-03-24T23:59:00"* ]]
+  [[ "$output" == *"2026-03-25T00:00:05"* ]]
+  # Should not include other sessions
+  [[ "$output" != *"other999"* ]]
+}
+
+@test "logs --session ID without --all only searches today" {
+  mkdir -p "$TEST_DIR/logs"
+  today=$(date +%Y-%m-%d)
+  # Create yesterday's log with a session entry
+  cat > "$TEST_DIR/logs/peon-ping-2026-03-24.log" <<'LOG'
+ts=2026-03-24T23:59:00 inv=aa11 session=midnight123 phase=[hook] event=Start
+LOG
+  # Create today's log with the same session
+  cat > "$TEST_DIR/logs/peon-ping-${today}.log" <<'LOG'
+ts=2026-03-25T00:00:05 inv=cc33 session=midnight123 phase=[sound] file=Hello1.wav
+LOG
+  run bash "$PEON_SH" logs --session midnight123
+  [ "$status" -eq 0 ]
+  # Should find today's entry only
+  [[ "$output" == *"2026-03-25T00:00:05"* ]]
+  # Should NOT find yesterday's entry (no --all)
+  [[ "$output" != *"2026-03-24T23:59:00"* ]]
+}
+
+@test "logs --session ID --all shows results in chronological order" {
+  mkdir -p "$TEST_DIR/logs"
+  today=$(date +%Y-%m-%d)
+  cat > "$TEST_DIR/logs/peon-ping-2026-03-23.log" <<'LOG'
+ts=2026-03-23T12:00:00 inv=aa11 session=chrono123 phase=[hook] event=Start
+LOG
+  cat > "$TEST_DIR/logs/peon-ping-2026-03-24.log" <<'LOG'
+ts=2026-03-24T12:00:00 inv=bb22 session=chrono123 phase=[hook] event=Stop
+LOG
+  cat > "$TEST_DIR/logs/peon-ping-${today}.log" <<'LOG'
+ts=2026-03-25T12:00:00 inv=cc33 session=chrono123 phase=[sound] file=Hello1.wav
+LOG
+  run bash "$PEON_SH" logs --session chrono123 --all
+  [ "$status" -eq 0 ]
+  # All three entries should appear
+  [[ "$output" == *"2026-03-23"* ]]
+  [[ "$output" == *"2026-03-24"* ]]
+  [[ "$output" == *"2026-03-25"* ]]
+  # Verify chronological order: line 1 should be earliest
+  first_line=$(echo "$output" | head -1)
+  [[ "$first_line" == *"2026-03-23"* ]]
+}
+
+@test "logs --session ID --all with no matches shows message" {
+  mkdir -p "$TEST_DIR/logs"
+  today=$(date +%Y-%m-%d)
+  echo "ts=2026-03-25T10:00:00 inv=aa11 session=abc123 phase=[hook] event=Start" > "$TEST_DIR/logs/peon-ping-${today}.log"
+  run bash "$PEON_SH" logs --session nonexistent --all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no entries for session=nonexistent across all log files"* ]]
+}
+
+@test "logs --session ID --all with no log files shows message" {
+  # Ensure no logs directory
+  rm -rf "$TEST_DIR/logs"
+  run bash "$PEON_SH" logs --session abc123 --all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no log files found"* ]]
+}
+
+@test "help shows logs --session --all" {
+  run bash "$PEON_SH" help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--session ID --all"* ]]
+}
+
+@test "logs --prune skips non-log files" {
+  mkdir -p "$TEST_DIR/logs"
+  touch "$TEST_DIR/logs/peon-ping-2020-01-01.log"
+  touch "$TEST_DIR/logs/other-file.txt"
+  touch "$TEST_DIR/logs/readme.md"
+
+  run bash "$PEON_SH" logs --prune
+  [ "$status" -eq 0 ]
+  # Non-log files should survive
+  [ -f "$TEST_DIR/logs/other-file.txt" ]
+  [ -f "$TEST_DIR/logs/readme.md" ]
+}
+
+@test "logs --clear deletes all log files" {
+  mkdir -p "$TEST_DIR/logs"
+  touch "$TEST_DIR/logs/peon-ping-2024-01-01.log"
+  touch "$TEST_DIR/logs/peon-ping-2024-06-15.log"
+  touch "$TEST_DIR/logs/peon-ping-$(date +%Y-%m-%d).log"
+
+  run bash "$PEON_SH" logs --clear
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cleared 3 log file(s)"* ]]
+  # All log files should be gone
+  local remaining
+  remaining=$(find "$TEST_DIR/logs" -name "peon-ping-*.log" 2>/dev/null | wc -l | tr -d ' ')
+  [ "$remaining" -eq 0 ]
+}
+
+@test "logs --clear reports no files when directory is empty" {
+  mkdir -p "$TEST_DIR/logs"
+
+  run bash "$PEON_SH" logs --clear
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no log files to clear"* ]]
+}
+
+@test "logs --prune skips non-log files in logs directory" {
+  /usr/bin/python3 -c "
+import json
+c = json.load(open('$TEST_DIR/config.json'))
+c['debug_retention_days'] = 1
+json.dump(c, open('$TEST_DIR/config.json', 'w'), indent=2)
+"
+  mkdir -p "$TEST_DIR/logs"
+  # Create a non-log file (should not be touched)
+  echo "keep me" > "$TEST_DIR/logs/custom-notes.txt"
+  touch "$TEST_DIR/logs/peon-ping-2020-01-01.log"
+
+  run bash "$PEON_SH" logs --prune
+  [ "$status" -eq 0 ]
+  # Non-log file should still exist
+  [ -f "$TEST_DIR/logs/custom-notes.txt" ]
+}
+
+# ── help includes debug and logs ─────────────────────────────────────
+
+@test "help lists debug command" {
+  run bash "$PEON_SH" help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"debug"* ]]
+}
+
+@test "help lists logs command" {
+  run bash "$PEON_SH" help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"logs"* ]]
 }

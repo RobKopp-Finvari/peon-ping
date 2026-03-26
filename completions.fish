@@ -28,11 +28,14 @@ complete -c peon -n __peon_no_subcommand -a mute -d "Alias for 'pause' — mute 
 complete -c peon -n __peon_no_subcommand -a unmute -d "Alias for 'resume' — unmute sounds"
 complete -c peon -n __peon_no_subcommand -a toggle -d "Toggle mute on/off"
 complete -c peon -n __peon_no_subcommand -a status -d "Show current status"
+complete -c peon -n "__peon_using_subcommand status" -l verbose -d "Show full details"
 complete -c peon -n __peon_no_subcommand -a volume -d "Get or set volume level"
 complete -c peon -n __peon_no_subcommand -a rotation -d "Get or set pack rotation mode"
 complete -c peon -n __peon_no_subcommand -a packs -d "Manage sound packs"
 complete -c peon -n __peon_no_subcommand -a notifications -d "Control desktop notifications"
 complete -c peon -n __peon_no_subcommand -a mobile -d "Configure mobile push notifications"
+complete -c peon -n __peon_no_subcommand -a debug -d "Toggle debug logging"
+complete -c peon -n __peon_no_subcommand -a logs -d "View or manage log files"
 complete -c peon -n __peon_no_subcommand -a relay -d "Start audio relay for devcontainers"
 complete -c peon -n __peon_no_subcommand -a help -d "Show help message"
 
@@ -97,6 +100,17 @@ complete -c peon -n "__peon_packs_subcommand remove" -a "(
   end
 )"
 
+# debug subcommands
+complete -c peon -n "__peon_using_subcommand debug" -a on -d "Enable debug logging"
+complete -c peon -n "__peon_using_subcommand debug" -a off -d "Disable debug logging"
+complete -c peon -n "__peon_using_subcommand debug" -a status -d "Show debug logging status"
+
+# logs subcommands
+complete -c peon -n "__peon_using_subcommand logs" -a "--last" -d "Show last N lines from latest log"
+complete -c peon -n "__peon_using_subcommand logs" -a "--session" -d "Show entries for a session"
+complete -c peon -n "__peon_using_subcommand logs" -a "--prune" -d "Delete old log files"
+complete -c peon -n "__peon_using_subcommand logs" -a "--clear" -d "Delete all log files"
+
 # mobile subcommands
 complete -c peon -n "__peon_using_subcommand mobile" -a ntfy -d "Set up ntfy.sh notifications"
 complete -c peon -n "__peon_using_subcommand mobile" -a pushover -d "Set up Pushover notifications"
@@ -137,3 +151,6 @@ complete -c peon -n "__peon_notif_subcommand position" -a "bottom-center" -d "Bo
 
 # notifications label values
 complete -c peon -n "__peon_notif_subcommand label" -a reset -d "Clear label override"
+
+# logs --session --all (conditional: only after --session)
+complete -c peon -n "__peon_using_subcommand logs; and __fish_seen_argument -l session" -a "--all" -d "Search across all log files"

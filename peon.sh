@@ -391,6 +391,7 @@ ssh_audio_mode() {
 # --- Platform-aware audio playback ---
 play_sound() {
   local file="$1" vol="$2"
+  _peon_log play "backend=$PLATFORM file=$(basename "$file") volume=$vol async=true"
   kill_previous_sound
   case "$PLATFORM" in
     mac)
@@ -473,6 +474,8 @@ play_sound() {
       if [ -n "$player" ]; then
         play_linux_sound "$file" "$vol" "$player"
         save_sound_pid $!
+      else
+        _peon_log play "error=\"no audio backend found\" searched=\"pw-play,paplay,ffplay,mpv,play,aplay\""
       fi
       ;;
     msys2)
@@ -921,6 +924,42 @@ sync_adapter_paused() {
   done
 }
 
+LOG_DIR="$PEON_DIR/logs"
+
+# Prune log files older than debug_retention_days.
+# Uses filename-based date parsing (peon-ping-YYYY-MM-DD.log) for cross-platform consistency.
+_prune_old_logs() {
+  local retention_days="${1:-7}"
+  [ ! -d "$LOG_DIR" ] && return 0
+  local today_epoch
+  today_epoch=$(date +%s)
+  local cutoff_epoch=$(( today_epoch - retention_days * 86400 ))
+  for logfile in "$LOG_DIR"/peon-ping-*.log; do
+    [ -f "$logfile" ] || continue
+    local basename="${logfile##*/}"
+    # Extract YYYY-MM-DD from peon-ping-YYYY-MM-DD.log
+    local date_part="${basename#peon-ping-}"
+    date_part="${date_part%.log}"
+    # Validate date format (YYYY-MM-DD)
+    case "$date_part" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+      *) continue ;;
+    esac
+    # Parse date to epoch (portable: use date -d on Linux, date -j on macOS)
+    local file_epoch
+    if date -d "$date_part" +%s >/dev/null 2>&1; then
+      file_epoch=$(date -d "$date_part" +%s 2>/dev/null) || continue
+    elif date -j -f "%Y-%m-%d" "$date_part" +%s >/dev/null 2>&1; then
+      file_epoch=$(date -j -f "%Y-%m-%d" "$date_part" +%s 2>/dev/null) || continue
+    else
+      continue
+    fi
+    if [ "$file_epoch" -lt "$cutoff_epoch" ]; then
+      rm -f "$logfile"
+    fi
+  done
+}
+
 case "${1:-}" in
   pause|mute)   touch "$PAUSED_FILE"; sync_adapter_paused; echo "peon-ping: sounds paused (run 'peon toggle' to unpause)"; exit 0 ;;
   resume|unmute)  rm -f "$PAUSED_FILE"; sync_adapter_paused; echo "peon-ping: sounds resumed"; exit 0 ;;
@@ -948,49 +987,54 @@ try:
 except Exception:
     c = {}
 
-dn = c.get('desktop_notifications', True)
 if verbose:
+    dn = c.get('desktop_notifications', True)
     dn_status = 'on' if dn else 'off (sounds still play)'
     print('peon-ping: desktop notifications ' + dn_status)
-else:
-    print('peon-ping: desktop notifications ' + ('on' if dn else 'off'))
-ns = c.get('notification_style', 'overlay')
-print('peon-ping: notification style ' + ns)
-np = c.get('notification_position', 'top-center')
-print('peon-ping: notification position ' + np)
-nd = c.get('notification_dismiss_seconds', 4)
-print('peon-ping: dismiss time ' + (str(nd) + 's' if nd > 0 else 'persistent (click to dismiss)'))
-_lbl = c.get('notification_title_override', '')
-_pmap = c.get('project_name_map', {})
-if _lbl:
-    print('peon-ping: label override: ' + _lbl)
-if _pmap:
-    print('peon-ping: project name map: ' + str(len(_pmap)) + ' pattern(s)')
-_tpls = c.get('notification_templates', {})
-if _tpls:
-    print('peon-ping: notification templates:')
-    for _tk, _tv in _tpls.items():
-        print(f'  {_tk} = "{_tv}"')
+    ns = c.get('notification_style', 'overlay')
+    print('peon-ping: notification style ' + ns)
+    np = c.get('notification_position', 'top-center')
+    print('peon-ping: notification position ' + np)
+    nd = c.get('notification_dismiss_seconds', 4)
+    print('peon-ping: dismiss time ' + (str(nd) + 's' if nd > 0 else 'persistent (click to dismiss)'))
+    _lbl = c.get('notification_title_override', '')
+    _pmap = c.get('project_name_map', {})
+    if _lbl:
+        print('peon-ping: label override: ' + _lbl)
+    if _pmap:
+        print('peon-ping: project name map: ' + str(len(_pmap)) + ' pattern(s)')
+    _tpls = c.get('notification_templates', {})
+    if _tpls:
+        print('peon-ping: notification templates:')
+        for _tk, _tv in _tpls.items():
+            print(f'  {_tk} = "{_tv}"')
 
-mn = c.get('mobile_notify', {})
-if mn and mn.get('service'):
-    enabled = mn.get('enabled', True)
-    svc = mn.get('service', '?')
-    if verbose:
+    mn = c.get('mobile_notify', {})
+    if mn and mn.get('service'):
+        enabled = mn.get('enabled', True)
+        svc = mn.get('service', '?')
         mobile_status = 'on' if enabled else 'off'
         print(f'peon-ping: mobile notifications {mobile_status} ({svc})')
     else:
-        print(f'peon-ping: mobile notifications ' + ('on' if enabled else 'off') + f' ({svc})')
-else:
-    print('peon-ping: mobile notifications not configured')
+        print('peon-ping: mobile notifications not configured')
 
-# --- Headphones-only mode ---
-headphones_only = c.get('headphones_only', False)
-print('peon-ping: headphones_only: ' + ('on' if headphones_only else 'off'))
-status_str = 'connected' if headphones_detected else 'not detected'
-if headphones_only and not headphones_detected:
-    status_str += ' (sounds muted)'
-print('peon-ping: headphones: ' + status_str)
+    # --- Headphones-only mode ---
+    headphones_only = c.get('headphones_only', False)
+    print('peon-ping: headphones_only: ' + ('on' if headphones_only else 'off'))
+    status_str = 'connected' if headphones_detected else 'not detected'
+    if headphones_only and not headphones_detected:
+        status_str += ' (sounds muted)'
+    print('peon-ping: headphones: ' + status_str)
+
+# --- Debug logging ---
+_debug = c.get('debug', False)
+_debug_status = 'enabled' if _debug else 'disabled'
+_log_dir = os.path.join(peon_dir, 'logs')
+print('peon-ping: debug logging: ' + _debug_status)
+if verbose:
+    print('  log dir: ' + _log_dir + '/')
+    _retention = c.get('debug_retention_days', 7)
+    print('  retention: ' + str(_retention) + ' days')
 
 # --- Active pack ---
 active = c.get('default_pack', c.get('active_pack', 'peon'))
@@ -1019,106 +1063,110 @@ if os.path.isdir(packs_dir):
                         break
 print(f'peon-ping: default pack: {active} ({display_name})')
 print(f'peon-ping: {pack_count} pack(s) installed')
-rules = c.get('path_rules', [])
-if rules:
-    import fnmatch as _fnm
-    _cwd = os.getcwd()
-    _matched = None
-    for _r in rules:
-        _pat = _r.get('pattern', '')
-        if _cwd and _fnm.fnmatch(_cwd, _pat):
-            _matched = _r
-            break
-    if _matched:
-        _mp = _matched.get('pattern', '')
-        _mk = _matched.get('pack', '')
-        print(f'peon-ping: path rule: {_mp} -> {_mk}')
-    print(f'peon-ping: path rules: {len(rules)} configured')
+if not verbose:
+    print('peon-ping: run \"peon status --verbose\" for full details')
+if verbose:
+    rules = c.get('path_rules', [])
+    if rules:
+        import fnmatch as _fnm
+        _cwd = os.getcwd()
+        _matched = None
+        for _r in rules:
+            _pat = _r.get('pattern', '')
+            if _cwd and _fnm.fnmatch(_cwd, _pat):
+                _matched = _r
+                break
+        if _matched:
+            _mp = _matched.get('pattern', '')
+            _mk = _matched.get('pack', '')
+            print(f'peon-ping: path rule: {_mp} -> {_mk}')
+        print(f'peon-ping: path rules: {len(rules)} configured')
 
-# --- IDE detection ---
-home = os.path.expanduser('~')
-claude_dir = os.environ.get('CLAUDE_CONFIG_DIR', os.path.join(home, '.claude'))
-xdg_config = os.environ.get('XDG_CONFIG_HOME', os.path.join(home, '.config'))
-opencode_dir = os.path.join(xdg_config, 'opencode')
+if verbose:
+    # --- IDE detection ---
+    home = os.path.expanduser('~')
+    claude_dir = os.environ.get('CLAUDE_CONFIG_DIR', os.path.join(home, '.claude'))
+    xdg_config = os.environ.get('XDG_CONFIG_HOME', os.path.join(home, '.config'))
+    opencode_dir = os.path.join(xdg_config, 'opencode')
 
-ides = []
+    ides = []
 
-# Claude Code: check if hooks are registered
-claude_hooks_dir = os.path.join(claude_dir, 'hooks', 'peon-ping')
-if os.path.isdir(claude_dir):
-    if os.path.exists(os.path.join(claude_hooks_dir, 'peon.sh')):
-        ides.append(('Claude Code', claude_dir, 'installed'))
-    else:
-        ides.append(('Claude Code', claude_dir, 'detected (not set up)'))
+    # Claude Code: check if hooks are registered
+    claude_hooks_dir = os.path.join(claude_dir, 'hooks', 'peon-ping')
+    if os.path.isdir(claude_dir):
+        if os.path.exists(os.path.join(claude_hooks_dir, 'peon.sh')):
+            ides.append(('Claude Code', claude_dir, 'installed'))
+        else:
+            ides.append(('Claude Code', claude_dir, 'detected (not set up)'))
 
-# OpenCode: check if plugin is installed
-opencode_plugin = os.path.join(opencode_dir, 'plugins', 'peon-ping.ts')
-if os.path.isdir(opencode_dir):
-    if os.path.exists(opencode_plugin):
-        ides.append(('OpenCode', opencode_dir, 'installed'))
-    else:
-        ides.append(('OpenCode', opencode_dir, 'detected (not set up)'))
+    # OpenCode: check if plugin is installed
+    opencode_plugin = os.path.join(opencode_dir, 'plugins', 'peon-ping.ts')
+    if os.path.isdir(opencode_dir):
+        if os.path.exists(opencode_plugin):
+            ides.append(('OpenCode', opencode_dir, 'installed'))
+        else:
+            ides.append(('OpenCode', opencode_dir, 'detected (not set up)'))
 
-# Rovo Dev CLI: check if hooks are registered in config.yml
-rovodev_dir = os.path.join(home, '.rovodev')
-rovodev_config = os.path.join(rovodev_dir, 'config.yml')
-rovodev_config_yaml = os.path.join(rovodev_dir, 'config.yaml')
-if os.path.isdir(rovodev_dir):
-    config_file = rovodev_config if os.path.isfile(rovodev_config) else rovodev_config_yaml if os.path.isfile(rovodev_config_yaml) else None
-    if config_file:
+    # Rovo Dev CLI: check if hooks are registered in config.yml
+    rovodev_dir = os.path.join(home, '.rovodev')
+    rovodev_config = os.path.join(rovodev_dir, 'config.yml')
+    rovodev_config_yaml = os.path.join(rovodev_dir, 'config.yaml')
+    if os.path.isdir(rovodev_dir):
+        config_file = rovodev_config if os.path.isfile(rovodev_config) else rovodev_config_yaml if os.path.isfile(rovodev_config_yaml) else None
+        if config_file:
+            try:
+                with open(config_file) as f:
+                    content = f.read()
+                if 'rovodev.sh' in content:
+                    ides.append(('Rovo Dev CLI', rovodev_dir, 'installed'))
+                else:
+                    ides.append(('Rovo Dev CLI', rovodev_dir, 'detected (not set up)'))
+            except Exception:
+                ides.append(('Rovo Dev CLI', rovodev_dir, 'detected'))
+        else:
+            ides.append(('Rovo Dev CLI', rovodev_dir, 'detected (not set up)'))
+
+    # Gemini CLI: check if hooks are registered in settings.json
+    gemini_dir = os.environ.get('GEMINI_CONFIG_DIR', os.path.join(home, '.gemini'))
+    gemini_settings = os.path.join(gemini_dir, 'settings.json')
+    if os.path.isfile(gemini_settings):
         try:
-            with open(config_file) as f:
-                content = f.read()
-            if 'rovodev.sh' in content:
-                ides.append(('Rovo Dev CLI', rovodev_dir, 'installed'))
-            else:
-                ides.append(('Rovo Dev CLI', rovodev_dir, 'detected (not set up)'))
+            with open(gemini_settings) as f:
+                settings = json.load(f)
+                hooks = settings.get('hooks', {})
+                if any('gemini.sh' in str(h) for h in hooks.values()):
+                    ides.append(('Gemini CLI', gemini_dir, 'installed'))
+                else:
+                    ides.append(('Gemini CLI', gemini_dir, 'detected (not set up)'))
         except Exception:
-            ides.append(('Rovo Dev CLI', rovodev_dir, 'detected'))
+            ides.append(('Gemini CLI', gemini_dir, 'detected'))
+
+    # OpenAI Codex: check if notify hook points to codex adapter
+    codex_dir = os.environ.get('CODEX_HOME', os.path.join(home, '.codex'))
+    codex_config = os.path.join(codex_dir, 'config.toml')
+    if os.path.isdir(codex_dir):
+        codex_installed = False
+        if os.path.isfile(codex_config):
+            try:
+                codex_cfg_text = open(codex_config).read()
+                codex_installed = (
+                    'adapters/codex.sh' in codex_cfg_text or
+                    'adapters/codex.ps1' in codex_cfg_text
+                )
+            except Exception:
+                codex_installed = False
+        if codex_installed:
+            ides.append(('OpenAI Codex', codex_dir, 'installed'))
+        else:
+            ides.append(('OpenAI Codex', codex_dir, 'detected (not set up)'))
+
+    if ides:
+        print('peon-ping: IDEs')
+        for name, path, status in ides:
+            marker = '[x]' if status == 'installed' else '[ ]'
+            print(f'  {marker} {name:12s} {path} ({status})')
     else:
-        ides.append(('Rovo Dev CLI', rovodev_dir, 'detected (not set up)'))
-
-# Gemini CLI: check if hooks are registered in settings.json
-gemini_dir = os.environ.get('GEMINI_CONFIG_DIR', os.path.join(home, '.gemini'))
-gemini_settings = os.path.join(gemini_dir, 'settings.json')
-if os.path.isfile(gemini_settings):
-    try:
-        with open(gemini_settings) as f:
-            settings = json.load(f)
-            hooks = settings.get('hooks', {})
-            if any('gemini.sh' in str(h) for h in hooks.values()):
-                ides.append(('Gemini CLI', gemini_dir, 'installed'))
-            else:
-                ides.append(('Gemini CLI', gemini_dir, 'detected (not set up)'))
-    except Exception:
-        ides.append(('Gemini CLI', gemini_dir, 'detected'))
-
-# OpenAI Codex: check if notify hook points to codex adapter
-codex_dir = os.environ.get('CODEX_HOME', os.path.join(home, '.codex'))
-codex_config = os.path.join(codex_dir, 'config.toml')
-if os.path.isdir(codex_dir):
-    codex_installed = False
-    if os.path.isfile(codex_config):
-        try:
-            codex_cfg_text = open(codex_config).read()
-            codex_installed = (
-                'adapters/codex.sh' in codex_cfg_text or
-                'adapters/codex.ps1' in codex_cfg_text
-            )
-        except Exception:
-            codex_installed = False
-    if codex_installed:
-        ides.append(('OpenAI Codex', codex_dir, 'installed'))
-    else:
-        ides.append(('OpenAI Codex', codex_dir, 'detected (not set up)'))
-
-if ides:
-    print('peon-ping: IDEs')
-    for name, path, status in ides:
-        marker = '[x]' if status == 'installed' else '[ ]'
-        print(f'  {marker} {name:12s} {path} ({status})')
-else:
-    print('peon-ping: no supported IDEs detected')
+        print('peon-ping: no supported IDEs detected')
 "
     exit 0 ;;
   notifications)
@@ -2644,18 +2692,30 @@ try:
 except Exception:
     cfg = {}
 changed = False
+migrations = []
 if 'active_pack' in cfg and 'default_pack' not in cfg:
     cfg['default_pack'] = cfg.pop('active_pack')
     changed = True
+    migrations.append('active_pack -> default_pack')
 elif 'active_pack' in cfg:
     cfg.pop('active_pack')
     changed = True
+    migrations.append('active_pack removed')
 if cfg.get('pack_rotation_mode') == 'agentskill':
     cfg['pack_rotation_mode'] = 'session_override'
     changed = True
+    migrations.append('agentskill -> session_override')
+if 'debug' not in cfg:
+    cfg['debug'] = False
+    changed = True
+    migrations.append('debug')
+if 'debug_retention_days' not in cfg:
+    cfg['debug_retention_days'] = 7
+    changed = True
+    migrations.append('debug_retention_days')
 if changed:
     json.dump(cfg, open(config_path, 'w'), indent=2)
-    print('peon-ping: config migrated (active_pack \u2192 default_pack, agentskill \u2192 session_override)')
+    print('peon-ping: config keys updated (' + ', '.join(migrations) + ')')
 " 2>/dev/null || true
     INSTALL_SCRIPT="$PEON_DIR/install.sh"
     if [ -f "$INSTALL_SCRIPT" ]; then
@@ -2693,6 +2753,14 @@ Commands:
   preview --list       List all categories and sound counts in the active pack
                        Categories: session.start, task.acknowledge, task.complete,
                        task.error, input.required, resource.limit, user.spam
+  debug on             Enable debug logging
+  debug off            Disable debug logging
+  debug status         Show debug state, log directory, file count, total size
+  logs                 Show last 50 lines of today's log
+  logs --last N        Show last N lines across all log files
+  logs --session ID    Filter today's log by session ID
+  logs --session ID --all  Search across all log files for session ID
+  logs --clear         Delete all log files (with confirmation)
   update               Update peon-ping and refresh all sound packs
   help                 Show this help
 
@@ -2729,6 +2797,19 @@ Trainer (exercise reminders):
   trainer goal <n>     Set daily goal for all exercises
   trainer goal <ex> <n> Set daily goal for one exercise
   trainer help         Show trainer help
+
+Debug logging:
+  debug on               Enable debug logging
+  debug off              Disable debug logging
+  debug status           Show debug logging state
+
+Log management:
+  logs                   Show last 50 lines of the most recent log
+  logs --last N          Show last N lines of the most recent log
+  logs --session <id>    Filter log entries by session ID
+  logs --session <id> --all  Search across all log files
+  logs --prune           Delete log files older than debug_retention_days
+  logs --clear           Delete all log files
 
 Relay (SSH/devcontainer/Codespaces):
   ssh-audio [mode]        SSH routing mode: relay (default), auto, or local
@@ -2964,6 +3045,150 @@ Exercises: pushups, squats
 TRAINER_HELP
         exit 0 ;;
     esac ;;
+  debug)
+    shift
+    case "${1:-}" in
+      "")
+        echo "Usage: peon debug <on|off|status>"; exit 0 ;;
+      on)
+        python3 -c "
+import json
+config_path = '$GLOBAL_CONFIG_PY'
+try:
+    cfg = json.load(open(config_path))
+except Exception:
+    cfg = {}
+cfg['debug'] = True
+if 'debug_retention_days' not in cfg:
+    cfg['debug_retention_days'] = 7
+json.dump(cfg, open(config_path, 'w'), indent=2)
+"
+        mkdir -p "$LOG_DIR"
+        echo "peon-ping: debug logging enabled"
+        echo "peon-ping: logs directory: $LOG_DIR"
+        exit 0 ;;
+      off)
+        python3 -c "
+import json
+config_path = '$GLOBAL_CONFIG_PY'
+try:
+    cfg = json.load(open(config_path))
+except Exception:
+    cfg = {}
+cfg['debug'] = False
+json.dump(cfg, open(config_path, 'w'), indent=2)
+"
+        echo "peon-ping: debug logging disabled"
+        exit 0 ;;
+      status)
+        python3 -c "
+import json, os, glob
+config_path = '$GLOBAL_CONFIG_PY'
+try:
+    cfg = json.load(open(config_path))
+except Exception:
+    cfg = {}
+enabled = cfg.get('debug', False)
+retention = cfg.get('debug_retention_days', 7)
+print('peon-ping: debug logging ' + ('on' if enabled else 'off'))
+print('peon-ping: log retention: ' + str(retention) + ' days')
+"
+        echo "peon-ping: logs directory: $LOG_DIR"
+        if [ -d "$LOG_DIR" ]; then
+          _count=$(find "$LOG_DIR" -name "peon-ping-*.log" 2>/dev/null | wc -l | tr -d ' ')
+          echo "peon-ping: log files: $_count"
+        fi
+        exit 0 ;;
+      *)
+        echo "Usage: peon debug <on|off|status>" >&2; exit 1 ;;
+    esac ;;
+  logs)
+    shift
+    case "${1:---last}" in
+      --prune)
+        _retention=$(python3 -c "
+import json
+config_path = '$GLOBAL_CONFIG_PY'
+try:
+    cfg = json.load(open(config_path))
+except Exception:
+    cfg = {}
+print(cfg.get('debug_retention_days', 7))
+" 2>/dev/null)
+        _retention="${_retention:-7}"
+        if [ ! -d "$LOG_DIR" ]; then
+          echo "peon-ping: no logs directory found"
+          exit 0
+        fi
+        # Count files before pruning
+        _before=$(find "$LOG_DIR" -name "peon-ping-*.log" 2>/dev/null | wc -l | tr -d ' ')
+        _prune_old_logs "$_retention"
+        _after=$(find "$LOG_DIR" -name "peon-ping-*.log" 2>/dev/null | wc -l | tr -d ' ')
+        _removed=$(( _before - _after ))
+        if [ "$_removed" -gt 0 ]; then
+          echo "peon-ping: pruned $_removed log file(s) older than ${_retention} days"
+        else
+          echo "peon-ping: no log files older than ${_retention} days"
+        fi
+        exit 0 ;;
+      --clear)
+        if [ -d "$LOG_DIR" ]; then
+          _count=$(find "$LOG_DIR" -name "peon-ping-*.log" 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$_count" -gt 0 ]; then
+            rm -f "$LOG_DIR"/peon-ping-*.log
+            echo "peon-ping: cleared $_count log file(s)"
+          else
+            echo "peon-ping: no log files to clear"
+          fi
+        else
+          echo "peon-ping: no logs directory found"
+        fi
+        exit 0 ;;
+      --last)
+        _n="${2:-50}"
+        if [ -d "$LOG_DIR" ]; then
+          _files=$(ls -1 "$LOG_DIR"/peon-ping-*.log 2>/dev/null | sort)
+          if [ -n "$_files" ]; then
+            cat $_files | tail -n "$_n"
+          else
+            echo "peon-ping: no log files found"
+          fi
+        else
+          echo "peon-ping: no logs directory found"
+        fi
+        exit 0 ;;
+      --session)
+        _sid="${2:-}"
+        if [ -z "$_sid" ]; then
+          echo "Usage: peon logs --session <id> [--all]" >&2; exit 1
+        fi
+        _all_flag="${3:-}"
+        if [ "$_all_flag" = "--all" ]; then
+          # Search across all log files in chronological order
+          if [ ! -d "$LOG_DIR" ] || [ -z "$(ls "$LOG_DIR"/peon-ping-*.log 2>/dev/null)" ]; then
+            echo "peon-ping: no log files found"
+            exit 0
+          fi
+          _matches=$(ls -1 "$LOG_DIR"/peon-ping-*.log 2>/dev/null | sort | xargs grep -F "session=$_sid" 2>/dev/null)
+          if [ -z "$_matches" ]; then
+            echo "peon-ping: no entries for session=$_sid across all log files"
+          else
+            echo "$_matches" | sed 's/^[^:]*://'
+          fi
+          exit 0
+        fi
+        # Default: search today's log only
+        _today=$(date +%Y-%m-%d)
+        _logfile="$LOG_DIR/peon-ping-${_today}.log"
+        if [ ! -f "$_logfile" ]; then
+          echo "peon-ping: no log file for today ($_today)"
+          exit 0
+        fi
+        grep -F "session=$_sid" "$_logfile" || echo "peon-ping: no entries for session=$_sid"
+        exit 0 ;;
+      *)
+        echo "Usage: peon logs [--last N | --session <id> [--all] | --prune | --clear]" >&2; exit 1 ;;
+    esac ;;
   --*)
     echo "Unknown option: $1" >&2
     echo "Run 'peon help' for usage." >&2; exit 1 ;;
@@ -3016,27 +3241,90 @@ _PEON_HOOK_TTY=$(_peon_walk_tty)
 _PEON_PYOUT=$(python3 -c "
 import sys, json, os, re, random, time, shlex, tempfile
 q = shlex.quote
+_peon_start = time.monotonic()
 
 config_path = '$CONFIG_PY'
 state_file = '$STATE_PY'
 peon_dir = '$PEON_DIR_PY'
 paused = '$PAUSED' == 'true'
 hook_tty = '$_PEON_HOOK_TTY'
-agent_modes = {'delegate'}
+agent_modes = {'delegate', 'dangerouslySkipPermissions'}
 state_dirty = False
 
 # --- Atomic state I/O helpers (shared definition from _PEON_STATE_PY_HELPERS) ---
 ${_PEON_STATE_PY_HELPERS}
 
 # --- Load config ---
+_config_error = None
 try:
     cfg = json.load(open(config_path))
-except Exception:
+except Exception as _ce:
     cfg = {}
+    _config_error = str(_ce)
 
 if str(cfg.get('enabled', True)).lower() == 'false':
     print('PEON_EXIT=true')
     sys.exit(0)
+
+# --- Structured debug logging (ADR-002) ---
+_inv = os.urandom(2).hex()
+_log_enabled = cfg.get('debug', False) or os.environ.get('PEON_DEBUG') == '1'
+_log_fh = None
+
+if _log_enabled:
+    import datetime as _dt
+    _log_dir = os.path.join(peon_dir, 'logs')
+    try:
+        os.makedirs(_log_dir, exist_ok=True)
+        _log_date = _dt.date.today().isoformat()
+        _log_path = os.path.join(_log_dir, 'peon-ping-' + _log_date + '.log')
+        _log_is_new = not os.path.exists(_log_path)
+        _log_fh = open(_log_path, 'a')
+    except Exception:
+        _log_enabled = False
+        _log_fh = None
+
+    def _log_quote(v):
+        s = str(v)
+        if ' ' in s or '\"' in s or '=' in s or '\n' in s or '\r' in s or not s:
+            s = s.replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')
+            # Escape newlines/CR after backslash escaping to avoid double-escape.
+            # Preserves the one-line-per-entry log invariant.
+            s = s.replace('\r', '\\\\r').replace('\n', '\\\\n')
+            return '\"' + s + '\"'
+        return s
+
+    def log(phase, **kw):
+        if not _log_fh:
+            return
+        _now = _dt.datetime.now()
+        ts = _now.strftime('%Y-%m-%dT%H:%M:%S.') + f'{_now.microsecond // 1000:03d}'
+        parts = [f'{ts} [{phase}] inv={_inv}']
+        for k, v in kw.items():
+            parts.append(f'{k}={_log_quote(v)}')
+        try:
+            print(' '.join(parts), file=_log_fh, flush=True)
+        except Exception:
+            pass
+
+    # Prune old logs on first file of the day
+    if _log_is_new and _log_fh:
+        _retention = int(cfg.get('debug_retention_days', 7))
+        try:
+            _cutoff = (_dt.date.today() - _dt.timedelta(days=_retention)).isoformat()
+            for f in os.listdir(_log_dir):
+                if f.startswith('peon-ping-') and f.endswith('.log'):
+                    fdate = f[len('peon-ping-'):-len('.log')]
+                    if fdate < _cutoff:
+                        os.remove(os.path.join(_log_dir, f))
+        except Exception:
+            pass
+else:
+    log = lambda phase, **kw: None
+
+# Log config error if config load failed (captured before logging was initialized)
+if _config_error:
+    log('config', error=_config_error, fallback='defaults')
 
 volume = cfg.get('volume', 0.5)
 desktop_notif = cfg.get('desktop_notifications', True)
@@ -3053,6 +3341,8 @@ suppress_subagent_complete = str(cfg.get('suppress_subagent_complete', False)).l
 headphones_only = str(cfg.get('headphones_only', False)).lower() == 'true'
 meeting_detect = str(cfg.get('meeting_detect', False)).lower() == 'true'
 suppress_sound_when_tab_focused = str(cfg.get('suppress_sound_when_tab_focused', False)).lower() == 'true'
+
+log('config', loaded=config_path, volume=volume, pack=active_pack, enabled=True)
 
 cats = cfg.get('categories', {})
 cat_enabled = {}
@@ -3089,8 +3379,12 @@ session_id = event_data.get('session_id', '') or event_data.get('conversation_id
 perm_mode = event_data.get('permission_mode', '')
 session_source = event_data.get('source', '')
 
+log('hook', event=event, session=session_id, cwd=cwd, paused=paused)
+
 # --- Load state ---
 state = read_state(state_file)
+
+log('state', sessions=len(state.get('agent_sessions', [])), rotation_index=state.get('rotation_index', 0), last_stop=state.get('last_stop_time', 0))
 
 # --- Agent detection ---
 agent_sessions = set(state.get('agent_sessions', []))
@@ -3098,10 +3392,14 @@ if perm_mode and perm_mode in agent_modes:
     agent_sessions.add(session_id)
     state['agent_sessions'] = list(agent_sessions)
     state_dirty = True
+    log('route', category='none', suppressed=True, reason='delegate_mode')
+    log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
     print('PEON_EXIT=true')
     write_state(state, state_file)
     sys.exit(0)
 elif session_id in agent_sessions:
+    log('route', category='none', suppressed=True, reason='agent_session')
+    log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
     print('PEON_EXIT=true')
     sys.exit(0)
 
@@ -3339,6 +3637,8 @@ if event == 'SessionStart':
     source = event_data.get('source', '')
     if source == 'compact':
         # Compaction is mid-conversation — greeting makes no sense, but maintain title
+        log('route', category='none', suppressed=True, reason='compact_source')
+        log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
         print('PROJECT=' + q(project or ''))
         print('STATUS=ready')
         print('MARKER=')
@@ -3372,6 +3672,8 @@ elif event == 'Stop':
     category = 'task.complete'
     # Suppress completion sound/notification for known sub-agent sessions
     if suppress_subagent_complete and session_id in state.get('subagent_sessions', {}):
+        log('route', category='task.complete', suppressed=True, reason='subagent_session')
+        log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
         write_state(state, state_file)
         print('PEON_EXIT=true')
         sys.exit(0)
@@ -3414,6 +3716,8 @@ elif event == 'Notification':
         msg_subtitle = 'Question pending'
     else:
         # Unknown notification type — maintain tab title (e.g. plan mode events)
+        log('route', category='none', suppressed=True, reason='unknown_notification')
+        log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
         print('PROJECT=' + q(project or ''))
         print('STATUS=working')
         print('MARKER=')
@@ -3422,6 +3726,8 @@ elif event == 'Notification':
 elif event == 'PermissionRequest':
     # Suppress permission sound/notification for known sub-agent sessions
     if suppress_subagent_complete and session_id in state.get('subagent_sessions', {}):
+        log('route', category='input.required', suppressed=True, reason='subagent_session')
+        log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
         write_state(state, state_file)
         print('PEON_EXIT=true')
         sys.exit(0)
@@ -3442,6 +3748,8 @@ elif event == 'PostToolUseFailure':
         status = 'error'
     else:
         # Non-Bash tool failure — no sound, but maintain tab title
+        log('route', category='none', suppressed=True, reason='non_bash_tool_failure')
+        log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
         print('PROJECT=' + q(project or ''))
         print('STATUS=working')
         print('MARKER=')
@@ -3450,6 +3758,8 @@ elif event == 'PostToolUseFailure':
 elif event == 'SubagentStop':
     # Subagent finished — suppress sound when configured, skip silently
     if suppress_subagent_complete:
+        log('route', category='task.complete', suppressed=True, reason='subagent_stop_suppressed')
+        log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
         write_state(state, state_file)
         print('PROJECT=' + q(project or ''))
         print('STATUS=working')
@@ -3470,6 +3780,8 @@ elif event == 'SubagentStart':
     state_dirty = True
     write_state(state, state_file)
     # Maintain parent's tab title while subagent runs (no sound)
+    log('route', category='none', suppressed=True, reason='subagent_start')
+    log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
     print('PROJECT=' + q(project or ''))
     print('STATUS=working')
     print('MARKER=')
@@ -3494,6 +3806,8 @@ elif event == 'SessionEnd':
     state['agent_sessions'] = list(agent_sessions)
     state_dirty = True
     write_state(state, state_file)
+    log('route', category='none', suppressed=True, reason='session_end_cleanup')
+    log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
     print('EVENT=' + q(event))
     print('PEON_EXIT=true')
     sys.exit(0)
@@ -3502,6 +3816,8 @@ elif event in ('PreToolUse', 'PostToolUse'):
     status = 'working'
 else:
     # Unknown event (plan mode, etc.) — no sound, but maintain tab title
+    log('route', category='none', suppressed=True, reason='unknown_event')
+    log('exit', duration_ms=int((time.monotonic() - _peon_start) * 1000), exit=0)
     print('PROJECT=' + q(project or ''))
     print('STATUS=working')
     print('MARKER=')
@@ -3513,6 +3829,7 @@ if event == 'Stop':
     now = time.time()
     last_stop = state.get('last_stop_time', 0)
     if now - last_stop < 5:
+        log('route', category='task.complete', suppressed=True, reason='debounce_5s')
         category = ''
         notify = ''
     state['last_stop_time'] = now
@@ -3534,6 +3851,7 @@ if event == 'SessionStart':
     if _ss_cooldown > 0:
         _last_ss = state.get('last_session_start_sound_time', 0)
         if now - _last_ss < _ss_cooldown:
+            log('route', category='session.start', suppressed=True, reason='session_start_cooldown')
             category = ''  # another workspace just greeted — stay quiet
         else:
             state['last_session_start_sound_time'] = now
@@ -3542,12 +3860,23 @@ elif category:
     session_starts = state.get('session_start_times', {})
     start_time = session_starts.get(session_id, 0)
     if start_time and (now - start_time) < 3:
+        log('route', category=category, suppressed=True, reason='replay_suppression')
         category = ''
         notify = ''
 
 # --- Check if category is enabled ---
 if category and not cat_enabled.get(category, True):
+    log('route', category=category, suppressed=True, reason='category_disabled')
     category = ''
+
+# --- Log route decision ---
+if category:
+    _route_reason = 'paused' if paused else ''
+    log('route', category=category, suppressed=bool(paused), reason=_route_reason)
+elif not category:
+    # No-op: category was cleared by a prior suppression (debounce, replay, cooldown)
+    # that already emitted its own [route] log entry.
+    pass
 
 # --- Pick sound (skip if no category or paused) ---
 sound_file = ''
@@ -3610,8 +3939,13 @@ if category and not paused:
                     icon_resolved = os.path.realpath(os.path.join(pack_dir, icon_candidate))
                     if icon_resolved.startswith(pack_root) and os.path.isfile(icon_resolved):
                         icon_path = icon_resolved
-    except Exception:
-        pass
+    except Exception as _e:
+        log('sound', error=str(_e), fallback='none')
+
+if sound_file:
+    log('sound', file=os.path.basename(sound_file), pack=active_pack, candidates=len(candidates) if 'candidates' in dir() else 0, no_repeat=True)
+elif category and not paused:
+    log('sound', error='no sound found', pack=active_pack, fallback='none')
 
 # --- Trainer reminder check ---
 trainer_sound = ''
@@ -3668,6 +4002,9 @@ if trainer_cfg.get('enabled', False):
             state_dirty = True
     state['trainer'] = trainer_state
     state_dirty = True
+    log('trainer', active=True, reminder=bool(trainer_sound), exercise=list(exercises.keys())[0] if exercises else '', reps=sum(reps.values()), goal=sum(exercises.values()))
+elif not trainer_cfg.get('enabled', False):
+    log('trainer', active=False, reminder=False)
 
 # --- Write state once ---
 if state_dirty:
@@ -3739,6 +4076,21 @@ if _tpl:
     except Exception:
         pass
 
+log('notify', desktop=bool(desktop_notif and notify), mobile=bool(cfg.get('mobile_notify', {}).get('service')), template=_tpl or '', rendered=msg)
+
+# --- Log exit ---
+_duration_ms = int((time.monotonic() - _peon_start) * 1000)
+log('exit', duration_ms=_duration_ms, exit=0)
+
+# --- Export log variables for bash-side [play] logging ---
+if _log_enabled and _log_fh:
+    try:
+        _log_fh.close()
+    except Exception:
+        pass
+    print('_PEON_LOG_FILE=' + q(_log_path))
+    print('_PEON_INV_ID=' + q(_inv))
+
 # --- Output shell variables ---
 print('PEON_EXIT=false')
 print('EVENT=' + q(event))
@@ -3777,8 +4129,53 @@ print('ICON_PATH=' + q(icon_path))
 print('TRAINER_SOUND=' + q(trainer_sound))
 print('TRAINER_MSG=' + q(trainer_msg))
 print('TAB_COLOR_RGB=' + q(tab_color_rgb))
+# Auto-prune: emit retention days so bash can prune without spawning another python3
+_auto_debug = cfg.get('debug', False) or os.environ.get('PEON_DEBUG') == '1'
+if _auto_debug:
+    print('PEON_AUTO_PRUNE=' + q(str(cfg.get('debug_retention_days', 7))))
 " <<< "$INPUT" 2>/dev/null)
 eval "$_PEON_PYOUT"
+
+# --- Bash-side debug log function for [play] and [notify] phases ---
+if [ -n "${_PEON_LOG_FILE:-}" ]; then
+  # Detect millisecond timestamp capability once at definition time.
+  # GNU date (Linux, Git Bash, WSL) supports %N nanoseconds; BSD date (macOS stock) does not.
+  if date '+%Y-%m-%dT%H:%M:%S.%3N' 2>/dev/null | grep -qE '\.[0-9]{3}$'; then
+    _peon_log() {
+      local phase="$1"; shift
+      local ts
+      ts=$(date '+%Y-%m-%dT%H:%M:%S.%3N')
+      printf '%s [%s] inv=%s %s\n' "$ts" "$phase" "$_PEON_INV_ID" "$*" >> "$_PEON_LOG_FILE" 2>/dev/null
+    }
+  else
+    # Fallback: use python3 for ms (already a dependency). If python3 is
+    # unavailable, fall back to .000 (known limitation on stock macOS bash).
+    if command -v python3 >/dev/null 2>&1; then
+      _peon_log() {
+        local phase="$1"; shift
+        local ts
+        ts=$(python3 -c "import datetime as d;n=d.datetime.now();print(n.strftime('%Y-%m-%dT%H:%M:%S.')+f'{n.microsecond//1000:03d}')")
+        printf '%s [%s] inv=%s %s\n' "$ts" "$phase" "$_PEON_INV_ID" "$*" >> "$_PEON_LOG_FILE" 2>/dev/null
+      }
+    else
+      # No ms source available — document as known limitation
+      _peon_log() {
+        local phase="$1"; shift
+        local ts
+        ts=$(date '+%Y-%m-%dT%H:%M:%S.000')
+        printf '%s [%s] inv=%s %s\n' "$ts" "$phase" "$_PEON_INV_ID" "$*" >> "$_PEON_LOG_FILE" 2>/dev/null
+      }
+    fi
+  fi
+else
+  _peon_log() { :; }
+fi
+
+# Auto-prune old log files in the background if debug is enabled.
+# PEON_AUTO_PRUNE is set by the main Python block above — no extra python3 process needed.
+if [ -n "${PEON_AUTO_PRUNE:-}" ]; then
+  ( _prune_old_logs "$PEON_AUTO_PRUNE" ) &>/dev/null &
+fi
 
 # If Python signalled early exit (disabled, agent, unknown event), bail out
 if [ "${PEON_EXIT:-true}" = "true" ]; then
@@ -3792,6 +4189,29 @@ if [ "${PEON_EXIT:-true}" = "true" ]; then
     printf '\033]0;%s\007' "${MARKER:-}${PROJECT}: ${STATUS:-working}" > /dev/tty 2>/dev/null || true
   fi
   exit 0
+fi
+
+# --- Auto-prune old log files (non-blocking, when debug logging is enabled) ---
+if [ "${PEON_DEBUG:-0}" = "1" ] || python3 -c "
+import json
+try:
+    cfg = json.load(open('$GLOBAL_CONFIG_PY'))
+except Exception:
+    cfg = {}
+exit(0 if cfg.get('debug', False) else 1)
+" 2>/dev/null; then
+  (
+    _retention=$(python3 -c "
+import json
+try:
+    cfg = json.load(open('$GLOBAL_CONFIG_PY'))
+except Exception:
+    cfg = {}
+print(cfg.get('debug_retention_days', 7))
+" 2>/dev/null)
+    _retention="${_retention:-7}"
+    _prune_old_logs "$_retention"
+  ) &>/dev/null &
 fi
 
 HEADPHONES_DETECTED=true
