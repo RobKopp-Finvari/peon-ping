@@ -1,23 +1,11 @@
-# Normalize line endings for all text files
+# Normalize line endings
 * text=auto
 
 # Force LF for shell scripts (critical for Unix execution)
 *.sh text eol=lf
-*.bash text eol=lf
-*.fish text eol=lf
-*.bats text eol=lf
 
-# Force CRLF for Windows scripts
-*.ps1 text eol=crlf
-*.cmd text eol=crlf
-*.bat text eol=crlf
-
-# Binary files
+# Audio files — treat as binary if added to the repo
 *.wav binary
 *.mp3 binary
-*.ogg binary
-*.png binary
-*.jpg binary
-*.gif binary
-*.ico binary
-*.svg text eol=lf
+*.aiff binary
+*.m4a binary

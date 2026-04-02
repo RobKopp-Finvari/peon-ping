@@ -1,26 +1,12 @@
-.vercel
+# Environment
 .env
-node_modules/
-video/out/
-video/public/sounds/
-video/src/*Preview.tsx
-!video/src/KirovPreview.tsx
-firebase-debug.log
-.claude/
 .env*.local
-social-post.md
-social-posts/
-.last_update_check
-.state.json
-homebrew-tap/
-PLAN-*.md
-checksums.txt
-video/promoted-packs.json
-scripts/peon-play
+
+# macOS
 .DS_Store
 
-# Nix
-result
-result-*
-.direnv
-.envrc.local
+# Claude Code project state
+.claude/
+
+# Compiled binary (built by setup.sh from scripts/meeting-detect.swift)
+scripts/meeting-detect
