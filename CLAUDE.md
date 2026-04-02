@@ -1,202 +1,77 @@
 # CLAUDE.md
 
-Developer guide for AI coding agents working on this codebase. For user-facing docs (install, configuration, CLI usage, sound packs, remote dev, mobile notifications), see [README.md](README.md).
+Developer guide for AI coding agents working on this codebase.
 
 ## Commands
 
 ```bash
-# Run all tests (requires bats-core: brew install bats-core)
-bats tests/
+# Syntax check all scripts
+bash -n play.sh && bash -n sounds.sh && bash -n setup.sh
 
-# Run a single test file
-bats tests/peon.bats
-bats tests/install.bats
-
-# Run a specific test by name
-bats tests/peon.bats -f "SessionStart plays a greeting sound"
-
-# Install locally for development (Unix/WSL2)
-bash install.sh --local
-
-# Install only specific packs (Unix/WSL2)
-bash install.sh --packs=peon,glados,peasant
-
-# Install locally for development (native Windows)
-powershell -File install.ps1
-
-# Install specific packs (native Windows)
-powershell -File install.ps1 -Packs peon,glados,peasant
-
-# Install all packs (native Windows)
-powershell -File install.ps1 -All
-
-# Run Pester tests (native Windows)
-Invoke-Pester -Path tests/adapters-windows.Tests.ps1
+# Run setup locally
+bash setup.sh
 ```
 
-There is no build step, linter, or formatter configured for the shell codebase.
-
-See [RELEASING.md](RELEASING.md) for the full release process (version bumps, tagging, Homebrew tap updates).
-
-## Related Repos
-
-peon-ping is part of the [PeonPing](https://github.com/PeonPing) org:
-
-| Repo | Purpose |
-|---|---|
-| **[peon-ping](https://github.com/PeonPing/peon-ping)** (this repo) | CLI tool, installer, hook runtime, IDE adapters |
-| **[registry](https://github.com/PeonPing/registry)** | Pack registry (`index.json` served via GitHub Pages at `peonping.github.io/registry/index.json`) |
-| **[og-packs](https://github.com/PeonPing/og-packs)** | Official sound packs (40 packs, tagged releases) |
-| **[homebrew-tap](https://github.com/PeonPing/homebrew-tap)** | Homebrew formula (`brew install PeonPing/tap/peon-ping`) |
-| **[openpeon](https://github.com/PeonPing/openpeon)** | CESP spec + openpeon.com website (Next.js in `site/`) |
-| **[peon-pet](https://github.com/PeonPing/peon-pet)** | macOS desktop pet — orc sprite that reacts to hook events (Electron + Three.js) |
+There is no build step, linter, or formatter configured.
 
 ## Architecture
 
-### Core Files
+### Files
 
-- **`peon.sh`** — Main hook script (Unix/WSL2). Receives JSON event data on stdin, routes events via an embedded Python block that handles config loading, event parsing, sound selection, and state management in a single invocation. Shell code then handles async audio playback (`nohup` + background processes), desktop notifications, and mobile push notifications.
-- **`peon.ps1`** — Main hook script (native Windows). Pure PowerShell implementation with same event flow as `peon.sh` but without Python dependency. Handles JSON parsing, config/state management, CESP category mapping, sound selection (no-repeat logic), and async audio playback via `win-play.ps1`.
-- **`relay.sh`** — HTTP relay server for SSH/devcontainer/Codespaces. Runs on the local machine, receives audio and notification requests from remote sessions.
-- **`install.sh`** — Installer (Unix/WSL2). Fetches pack registry from GitHub Pages, registers hooks in `~/.claude/settings.json`, and delegates pack downloads to `pack-download.sh`. Falls back to a hardcoded pack list if registry is unreachable.
-- **`install.ps1`** — Installer (native Windows). PowerShell version with registry fetching, pack downloads, hook registration, CLI shortcut creation (`peon.cmd` in `~/.local/bin`), and skills installation. Supports `-Packs` param for selective installs and `-All` for full registry.
-- **`scripts/pack-download.sh`** — Shared pack download engine used by both `install.sh` and `peon packs install`. Handles registry fetching, pack validation, tarball downloads, and extraction.
-- **`scripts/win-play.ps1`** — Windows audio playback backend. Async MP3/WAV player using `MediaPlayer` class with volume control.
-- **`config.json`** — Default configuration template.
+| File | Purpose |
+|---|---|
+| `play.sh` | Hook script — called by Claude Code with event name as `$1`. Sources config, resolves pack, checks suppression conditions, plays sound via `afplay`. |
+| `sounds.sh` | CLI — `sounds toggle`, `sounds status`, `sounds pack use`, etc. Reads/writes `~/.claude/sounds/config`. |
+| `setup.sh` | Installer — copies scripts, creates sound directory, registers hooks in `~/.claude/settings.json`, compiles `meeting-detect`, installs skills, adds `sounds` to PATH. |
+| `sounds/config` | Config template — copied to `~/.claude/sounds/config` on first install. Shell-sourced key=value format. |
+| `scripts/meeting-detect.swift` | Swift source for the `meeting-detect` binary. Queries CoreAudio `kAudioDevicePropertyDeviceIsRunningSomewhere` to detect active mic input. Compiled by `setup.sh` via `swiftc`. |
+| `skills/sounds-toggle/SKILL.md` | Claude Code skill — `/sounds-toggle` in-session command. |
+| `skills/sounds-use/SKILL.md` | Claude Code skill — `/sounds-use` in-session command. |
 
-### Event Flow
+### Event flow
 
-IDE triggers hook → `peon.sh` reads JSON stdin → single Python call maps events to CESP categories (`session.start`, `task.complete`, `input.required`, `user.spam`, etc.) → picks a sound (no-repeat logic) → shell plays audio async and optionally sends desktop/mobile notification.
+1. Claude Code fires hook → calls `bash ~/.claude/hooks/sounds/play.sh <EventName>`
+2. `play.sh` sources `~/.claude/sounds/config`
+3. Checks master `ENABLED` switch
+4. Records timestamp if `UserPromptSubmit` + `SILENT_WINDOW_SECONDS` is set
+5. Resolves active pack directory (pinned `PACK` → cycling index → flat `SOUNDS_DIR`)
+6. Maps event name to config key + sound file stem
+7. Checks per-event enabled flag
+8. Checks `SILENT_WINDOW_SECONDS` for `Stop` events
+9. Finds sound file (tries `.wav`, `.mp3`, `.aiff`, `.m4a`)
+10. Runs pre-play checks: tab focus (`SUPPRESS_SOUND_WHEN_TAB_FOCUSED`), headphones (`HEADPHONES_ONLY`), meeting (`MEETING_DETECT`)
+11. Plays: `afplay -v $VOLUME $FILE &`
 
-### Platform Detection
+### State files
 
-`peon.sh` detects the runtime environment and routes audio accordingly:
+| File | Contents |
+|---|---|
+| `~/.claude/sounds/.pack_index` | Single integer — index into the sorted pack directory list for round-robin cycling |
+| `~/.claude/sounds/.state` | `last_prompt_time=<unix_timestamp>` — used by `SILENT_WINDOW_SECONDS` |
 
-- **mac / linux / wsl2** — Direct audio playback via native backends
-- **ssh** — Detected via `SSH_CONNECTION`/`SSH_CLIENT` env vars → relay at `localhost:19998`
-- **devcontainer** — Detected via `REMOTE_CONTAINERS`/`CODESPACES` env vars → relay at `host.docker.internal:19998`
+### Hook events registered
 
-### Multi-IDE Adapters
+`SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`, `Stop`, `Notification`, `PermissionRequest`, `PostToolUseFailure` (matcher: `Bash`), `PreCompact`
 
-- **`adapters/codex.sh`** — Translates OpenAI Codex events to CESP JSON
-- **`adapters/cursor.sh`** — Translates Cursor events to CESP JSON
-- **`adapters/opencode.sh`** — Installer for OpenCode adapter
-- **`adapters/opencode/peon-ping.ts`** — Full TypeScript CESP plugin for OpenCode IDE
-- **`adapters/kilo.sh`** — Installer for Kilo CLI adapter (downloads and patches the OpenCode plugin)
-- **`adapters/kiro.sh`** — Translates Kiro CLI (Amazon) events to CESP JSON
-- **`adapters/windsurf.sh`** — Translates Windsurf Cascade hook events to CESP JSON
-- **`adapters/antigravity.sh`** — Filesystem watcher for Google Antigravity agent events
-
-All adapters have native Windows PowerShell (`.ps1`) counterparts alongside the bash originals. Windows adapters pipe CESP JSON to `peon.ps1` instead of `peon.sh`. Filesystem watchers (amp, antigravity, kimi) use .NET `FileSystemWatcher` instead of fswatch/inotifywait.
-
-All adapters translate IDE-specific events into the standardized CESP JSON format that `peon.sh`/`peon.ps1` expects.
-
-### Platform Audio Backends
-
-- **macOS:** `afplay`
-- **WSL2:** PowerShell `MediaPlayer` (via `peon.sh` cross-platform detection)
-- **Native Windows:** PowerShell `MediaPlayer` (via `scripts/win-play.ps1`)
-- **Linux:** priority chain: `pw-play` → `paplay` → `ffplay` → `mpv` → `play` (SoX) → `aplay` (each with different volume scaling)
-- **SSH/devcontainer:** HTTP relay to local machine (see `relay.sh`)
-
-### State Management
-
-`.state.json` persists across invocations: agent session tracking (suppresses sounds in delegate mode), pack rotation index, prompt timestamps (for annoyed easter egg), last-played sounds (no-repeat), and stop debouncing.
-
-### Pack System
-
-Packs use `openpeon.json` ([CESP v1.0](https://github.com/PeonPing/openpeon)) manifests with dotted categories mapping to arrays of `{ "file": "sound.wav", "label": "text" }` entries. Packs are downloaded at install time from the [OpenPeon registry](https://github.com/PeonPing/registry) into `~/.claude/hooks/peon-ping/packs/`. The registry `index.json` contains `source_repo`, `source_ref`, and `source_path` fields pointing to each pack's source (official packs in og-packs, community packs in contributor repos).
-
-## Testing
-
-Tests use [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System). Test setup (`tests/setup.bash`) creates isolated temp directories with mock audio backends, manifests, and config so tests never touch real state. Key mock: `afplay` is replaced with a script that logs calls instead of playing audio.
-
-Windows adapter tests use [Pester](https://pester.dev/) (`tests/adapters-windows.Tests.ps1`). These validate PowerShell syntax, event mapping, daemon flags, `FileSystemWatcher` usage, and the absence of `ExecutionPolicy Bypass` across all `.ps1` adapters.
-
-CI runs two jobs via GitHub Actions: BATS on macOS (`macos-latest`) and Pester on Windows (`windows-latest`).
-
-## Releasing
-
-After merging PRs that add features, fix bugs, or make notable changes, **proactively suggest a version bump**. Don't wait to be asked.
-
-**When to bump:**
-- **Patch** (1.8.1): bug fixes, small tweaks, test-only changes
-- **Minor** (1.9.0): new features, new adapters, new platform support
-- **Major** (2.0.0): breaking changes to config, hooks, or CLI
-
-**Release checklist:**
-1. Run `bats tests/` — all tests must pass
-2. Update `CHANGELOG.md` — add new section at top with version, date, and categorized changes (Added/Fixed/Breaking)
-3. Bump `VERSION` file
-4. Commit: `git commit -m "chore: bump version to X.Y.Z"`
-5. Tag: `git tag vX.Y.Z`
-6. Push: `git push && git push --tags`
-
-The tag push triggers CI to create a GitHub Release and auto-update the Homebrew tap.
-
-See [RELEASING.md](RELEASING.md) for full details.
+All run async (`"async": true`) with a 10s timeout.
 
 ## Skills
 
-Four Claude Code skills live in `skills/`:
-- `/peon-ping-toggle` — Mute/unmute sounds
-- `/peon-ping-config` — Modify any peon-ping setting (volume, packs, categories, etc.)
-- `/peon-ping-use <pack>` — Assign a specific pack to the current agent session (agentskill mode)
-- `/peon-ping-log <n> <exercise>` — Log exercise reps to the Peon Trainer (e.g. `/peon-ping-log 25 pushups`)
+| Skill | Invocation | What Claude does |
+|---|---|---|
+| `sounds-toggle` | `/sounds-toggle` | Runs `sounds toggle` / `sounds enable` / `sounds disable` / `sounds status` via Bash |
+| `sounds-use` | `/sounds-use` | Runs `sounds pack list` then `sounds pack use <name>` / `cycle` / `next` via Bash |
 
-## Change Enforcement Rules
+Skills are installed to `~/.claude/skills/` by `setup.sh`.
 
-These are hard rules. When you make a change of type X, you MUST also do Y.
+## Config keys reference
 
-### If you add/change a CESP category (e.g., `task.error`, `resource.limit`)
-→ Update `../openpeon/site/scripts/generate-pack-data.ts` FRANCHISE_MAP if any pack manifests reference new packs
-→ Update the spec at `../openpeon/site/src/app/spec/page.tsx` if the category is new to the spec
-→ Update `../openpeon/site/public/llms.txt` (openpeon.com LLM context)
+See `sounds/config` for the full template with inline documentation. All keys are optional — `play.sh` uses `:-` defaults for every key, so the config file can be partial.
 
-### If you add/change a hook event (e.g., SubagentStart, PreCompact)
-→ Update `../homebrew-tap/Formula/peon-ping.rb` — the hook registration list in Phase 4
-→ Update `README.md` — the "Supported events" section
-→ Bump version (patch or minor depending on significance)
+## Releasing
 
-### If you add a new IDE adapter (e.g., a new `adapters/foo.sh`)
-→ Update `README.md` — supported IDEs section
-→ Update `../homebrew-tap/Formula/peon-ping.rb` — add detection/setup phase if needed
-→ Update `workspace/SOUL.md` in peonping-x-bot repo (supported tools count)
-→ Update `docs/public/llms.txt`
-→ Bump version (minor)
-
-### If you add/change a config key in `config.json`
-→ Ensure `peon.sh` backfills the new key on update (the config merge logic in `peon update`)
-→ Add a test covering the new config behavior in `tests/peon.bats`
-→ Update `README.md` configuration docs
-
-### If you add/change a CLI command (`peon <cmd>`)
-→ Update `completions.bash` and `completions.fish`
-→ Update `README.md` CLI reference section
-→ Add BATS test in `tests/peon.bats`
-
-### If you update `README.md` (any feature doc change)
-→ Apply the same change to `README_zh.md` (Chinese translation)
-→ Update `docs/public/llms.txt` — peonping.com LLM context file
-→ Update `../openpeon/site/public/llms.txt` if the change relates to CESP/MCP/packs
-
-### If you bump the VERSION
-→ Update `CHANGELOG.md` — add a new section at the top
-→ Tag: `git tag vX.Y.Z`
-→ Push tags: `git push --tags`
-→ Update `../homebrew-tap/Formula/peon-ping.rb` URL and SHA256 if releasing
-
-## Documentation rules
-
-**Whenever `README.md` is updated, also update all language variants:**
-- `README_zh.md` — Chinese translation (currently the only language variant)
-
-Apply the same changes in the appropriate language. If a section is added to `README.md`, add the translated equivalent to each language README in the same location.
-
-**Whenever the website or README is updated for a new feature, also update:**
-- `docs/public/llms.txt` — peonping.com LLM context file
-- `../openpeon/site/public/llms.txt` — openpeon.com LLM context file (if the feature relates to CESP/MCP/packs)
-
-## Website
-
-`docs/` contains the static landing page ([peonping.com](https://peonping.com)), deployed via Vercel. A `vercel.json` in `docs/` provides the `/install` redirect so `curl -fsSL peonping.com/install | bash` works. `video/` is a separate Remotion project for promotional videos (React + TypeScript, independent from the main codebase).
+1. `bash -n play.sh && bash -n sounds.sh && bash -n setup.sh` — all must pass
+2. Update `CHANGELOG.md` — add section at top with version, date, and changes
+3. Bump `VERSION` file
+4. `git commit -m "chore: bump version to X.Y.Z"`
+5. `git tag vX.Y.Z && git push && git push --tags`
