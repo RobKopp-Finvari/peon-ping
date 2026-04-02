@@ -1,0 +1,470 @@
+#!/usr/bin/env bash
+# sounds — CLI for Claude Code sound hook
+# Usage: sounds <command> [args]
+
+set -euo pipefail
+
+SOUNDS_DIR="${CLAUDE_SOUNDS_DIR:-$HOME/.claude/sounds}"
+CONFIG="$SOUNDS_DIR/config"
+
+if [[ ! -f "$CONFIG" ]]; then
+  echo "sounds: config not found at $CONFIG" >&2
+  echo "Run setup.sh to initialize." >&2
+  exit 1
+fi
+
+# --- Config helpers ---
+
+config_get() {
+  local key="$1" default="${2:-}"
+  local val
+  val=$(grep "^${key}=" "$CONFIG" 2>/dev/null | tail -1 | cut -d= -f2-)
+  echo "${val:-$default}"
+}
+
+config_set() {
+  local key="$1" value="$2"
+  if grep -q "^${key}=" "$CONFIG" 2>/dev/null; then
+    sed -i '' "s|^${key}=.*|${key}=${value}|" "$CONFIG"
+  else
+    echo "${key}=${value}" >> "$CONFIG"
+  fi
+}
+
+config_unset() {
+  local key="$1"
+  sed -i '' "/^${key}=/d" "$CONFIG"
+}
+
+# --- Pack helpers ---
+
+list_pack_dirs() {
+  find "$SOUNDS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort
+}
+
+current_pack_dir() {
+  local pinned
+  pinned=$(config_get PACK "")
+  if [[ -n "$pinned" && -d "$SOUNDS_DIR/$pinned" ]]; then
+    echo "$SOUNDS_DIR/$pinned"
+    return
+  fi
+
+  local packs=()
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] && packs+=("$dir")
+  done < <(list_pack_dirs)
+
+  if [[ ${#packs[@]} -eq 0 ]]; then
+    echo "$SOUNDS_DIR"
+    return
+  fi
+
+  local index=0
+  [[ -f "$SOUNDS_DIR/.pack_index" ]] && index=$(< "$SOUNDS_DIR/.pack_index")
+  index=$(( index % ${#packs[@]} ))
+  echo "${packs[$index]}"
+}
+
+# --- Hook name mappings ---
+
+hook_key() {
+  case "$1" in
+    stop)                          echo "STOP" ;;
+    notification|notify)           echo "NOTIFICATION" ;;
+    permission|permission_request) echo "PERMISSION_REQUEST" ;;
+    failure|post_tool_use_failure) echo "POST_TOOL_USE_FAILURE" ;;
+    subagent_stop)                 echo "SUBAGENT_STOP" ;;
+    session_start)                 echo "SESSION_START" ;;
+    session_end)                   echo "SESSION_END" ;;
+    subagent_start)                echo "SUBAGENT_START" ;;
+    prompt|user_prompt_submit)     echo "USER_PROMPT_SUBMIT" ;;
+    compact|pre_compact)           echo "PRE_COMPACT" ;;
+    *)                             echo "" ;;
+  esac
+}
+
+hook_sound() {
+  case "$1" in
+    stop)                          echo "stop" ;;
+    notification|notify)           echo "notification" ;;
+    permission|permission_request) echo "permission_request" ;;
+    failure|post_tool_use_failure) echo "post_tool_use_failure" ;;
+    subagent_stop)                 echo "subagent_stop" ;;
+    session_start)                 echo "session_start" ;;
+    session_end)                   echo "session_end" ;;
+    subagent_start)                echo "subagent_start" ;;
+    prompt|user_prompt_submit)     echo "user_prompt_submit" ;;
+    compact|pre_compact)           echo "pre_compact" ;;
+    *)                             echo "" ;;
+  esac
+}
+
+find_sound_file() {
+  local pack_dir="$1" stem="$2"
+  for ext in wav mp3 aiff m4a; do
+    local f="$pack_dir/$stem.$ext"
+    [[ -f "$f" ]] && echo "$f" && return
+  done
+  echo ""
+}
+
+ALL_HOOKS=(stop notification permission_request post_tool_use_failure subagent_stop
+           session_start session_end subagent_start user_prompt_submit pre_compact)
+DEFAULT_ON=(stop notification permission_request post_tool_use_failure subagent_stop)
+
+is_default_on() {
+  local hook="$1"
+  for d in "${DEFAULT_ON[@]}"; do [[ "$d" == "$hook" ]] && return 0; done
+  return 1
+}
+
+# --- Commands ---
+
+cmd_toggle() {
+  local current
+  current=$(config_get ENABLED "true")
+  if [[ "$current" == "true" ]]; then
+    config_set ENABLED false
+    echo "sounds: paused"
+  else
+    config_set ENABLED true
+    echo "sounds: resumed"
+  fi
+}
+
+cmd_status() {
+  local enabled pinned pack_dir pack_name
+  enabled=$(config_get ENABLED "true")
+  pinned=$(config_get PACK "")
+  pack_dir=$(current_pack_dir)
+  pack_name=$(basename "$pack_dir")
+
+  echo "Sounds:  $([ "$enabled" == "true" ] && echo "ON" || echo "OFF (paused)")"
+  echo "Volume:  $(config_get VOLUME "0.5")"
+
+  # Pack info
+  local packs=()
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] && packs+=("$dir")
+  done < <(list_pack_dirs)
+
+  if [[ ${#packs[@]} -eq 0 ]]; then
+    echo "Pack:    (no packs — loading from $SOUNDS_DIR directly)"
+  elif [[ -n "$pinned" ]]; then
+    echo "Pack:    $pinned (pinned)"
+  else
+    local index=0
+    [[ -f "$SOUNDS_DIR/.pack_index" ]] && index=$(< "$SOUNDS_DIR/.pack_index")
+    index=$(( index % ${#packs[@]} ))
+    echo "Pack:    $pack_name ($(( index + 1 )) of ${#packs[@]}, cycling)"
+  fi
+
+  # Optional features
+  local meeting headphones focused silent
+  meeting=$(config_get MEETING_DETECT "false")
+  headphones=$(config_get HEADPHONES_ONLY "false")
+  focused=$(config_get SUPPRESS_SOUND_WHEN_TAB_FOCUSED "true")
+  silent=$(config_get SILENT_WINDOW_SECONDS "0")
+
+  echo ""
+  echo "Options:"
+  local meeting_bin="$HOME/.claude/hooks/sounds/meeting-detect"
+  local meeting_status=""
+  if [[ "$meeting" == "true" ]]; then
+    [[ -x "$meeting_bin" ]] && meeting_status=" (binary ready)" || meeting_status=" (binary missing — run setup.sh)"
+  fi
+  echo "  meeting_detect               $([ "$meeting" == "true" ] && echo "on${meeting_status}" || echo "off")"
+  echo "  headphones_only              $([ "$headphones" == "true" ] && echo "on" || echo "off")"
+  echo "  suppress_sound_when_focused  $([ "$focused" == "true" ] && echo "on" || echo "off")"
+  echo "  silent_window_seconds        $silent"
+
+  echo ""
+  printf "%-26s %-5s %s\n" "Hook" "State" "Sound file"
+  printf "%-26s %-5s %s\n" "─────────────────────────" "─────" "───────────────────"
+
+  for hook in "${ALL_HOOKS[@]}"; do
+    local key sound_stem file state
+    key=$(hook_key "$hook")
+    sound_stem=$(hook_sound "$hook")
+    file=$(find_sound_file "$pack_dir" "$sound_stem")
+
+    local default; is_default_on "$hook" && default="true" || default="false"
+    state=$(config_get "$key" "$default")
+
+    if [[ "$state" == "true" ]]; then
+      local display_file
+      [[ -n "$file" ]] && display_file=$(basename "$file") || display_file="— no sound file"
+      printf "%-26s %-5s %s\n" "$hook" "on" "$display_file"
+    else
+      printf "%-26s %s\n" "$hook" "off"
+    fi
+  done
+}
+
+cmd_enable() {
+  local hook="${1:-}"
+  if [[ -z "$hook" || "$hook" == "all" ]]; then
+    for h in "${ALL_HOOKS[@]}"; do config_set "$(hook_key "$h")" true; done
+    echo "sounds: all hooks enabled"
+    return
+  fi
+  local key
+  key=$(hook_key "$hook")
+  if [[ -z "$key" ]]; then
+    echo "sounds: unknown hook '$hook'" >&2
+    echo "Valid: ${ALL_HOOKS[*]}" >&2; exit 1
+  fi
+  config_set "$key" true
+  echo "sounds: $hook enabled"
+}
+
+cmd_disable() {
+  local hook="${1:-}"
+  if [[ -z "$hook" || "$hook" == "all" ]]; then
+    for h in "${ALL_HOOKS[@]}"; do config_set "$(hook_key "$h")" false; done
+    echo "sounds: all hooks disabled"
+    return
+  fi
+  local key
+  key=$(hook_key "$hook")
+  if [[ -z "$key" ]]; then
+    echo "sounds: unknown hook '$hook'" >&2
+    echo "Valid: ${ALL_HOOKS[*]}" >&2; exit 1
+  fi
+  config_set "$key" false
+  echo "sounds: $hook disabled"
+}
+
+cmd_volume() {
+  local val="${1:-}"
+  if [[ -z "$val" ]]; then
+    echo "Volume: $(config_get VOLUME "0.5")"
+    return
+  fi
+  if ! echo "$val" | grep -qE '^(0(\.[0-9]+)?|1(\.0+)?)$'; then
+    echo "sounds: volume must be between 0.0 and 1.0" >&2; exit 1
+  fi
+  config_set VOLUME "$val"
+  echo "sounds: volume set to $val"
+}
+
+cmd_meeting() {
+  local val="${1:-}"
+  if [[ -z "$val" ]]; then
+    local current meeting_bin
+    current=$(config_get MEETING_DETECT "false")
+    meeting_bin="$HOME/.claude/hooks/sounds/meeting-detect"
+    echo "meeting_detect: $current"
+    [[ "$current" == "true" && ! -x "$meeting_bin" ]] && echo "  Warning: binary not found — run setup.sh to compile it"
+    return
+  fi
+  case "$val" in
+    on|true)   config_set MEETING_DETECT true;  echo "sounds: meeting detect enabled" ;;
+    off|false) config_set MEETING_DETECT false; echo "sounds: meeting detect disabled" ;;
+    *)
+      echo "Usage: sounds meeting [on|off]" >&2; exit 1
+      ;;
+  esac
+}
+
+cmd_headphones() {
+  local val="${1:-}"
+  if [[ -z "$val" ]]; then
+    echo "headphones_only: $(config_get HEADPHONES_ONLY "false")"
+    return
+  fi
+  case "$val" in
+    on|true)   config_set HEADPHONES_ONLY true;  echo "sounds: headphones only enabled" ;;
+    off|false) config_set HEADPHONES_ONLY false; echo "sounds: headphones only disabled" ;;
+    *)
+      echo "Usage: sounds headphones [on|off]" >&2; exit 1
+      ;;
+  esac
+}
+
+cmd_focused() {
+  local val="${1:-}"
+  if [[ -z "$val" ]]; then
+    echo "suppress_sound_when_tab_focused: $(config_get SUPPRESS_SOUND_WHEN_TAB_FOCUSED "true")"
+    return
+  fi
+  case "$val" in
+    on|true)   config_set SUPPRESS_SOUND_WHEN_TAB_FOCUSED true;  echo "sounds: tab focus suppression enabled" ;;
+    off|false) config_set SUPPRESS_SOUND_WHEN_TAB_FOCUSED false; echo "sounds: tab focus suppression disabled" ;;
+    *)
+      echo "Usage: sounds focused [on|off]" >&2; exit 1
+      ;;
+  esac
+}
+
+cmd_silent() {
+  local val="${1:-}"
+  if [[ -z "$val" ]]; then
+    echo "silent_window_seconds: $(config_get SILENT_WINDOW_SECONDS "0")"
+    return
+  fi
+  if ! echo "$val" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+    echo "sounds: value must be a number of seconds (e.g. 3 or 3.5)" >&2; exit 1
+  fi
+  config_set SILENT_WINDOW_SECONDS "$val"
+  echo "sounds: silent window set to ${val}s"
+}
+
+cmd_pack() {
+  local sub="${1:-list}"
+  shift || true
+
+  case "$sub" in
+    list)
+      local packs=()
+      while IFS= read -r dir; do
+        [[ -n "$dir" ]] && packs+=("$dir")
+      done < <(list_pack_dirs)
+
+      if [[ ${#packs[@]} -eq 0 ]]; then
+        echo "No packs installed."
+        echo "Create subdirectories in $SOUNDS_DIR/ to define packs."
+        return
+      fi
+
+      local pinned index
+      pinned=$(config_get PACK "")
+      index=0
+      [[ -f "$SOUNDS_DIR/.pack_index" ]] && index=$(< "$SOUNDS_DIR/.pack_index")
+      index=$(( index % ${#packs[@]} ))
+
+      for i in "${!packs[@]}"; do
+        local name marker=""
+        name=$(basename "${packs[$i]}")
+        if [[ -n "$pinned" && "$name" == "$pinned" ]]; then
+          marker="  (pinned)"
+        elif [[ -z "$pinned" && $i -eq $index ]]; then
+          marker="  (active)"
+        fi
+        echo "$name$marker"
+      done
+      ;;
+
+    use)
+      local name="${1:-}"
+      [[ -z "$name" ]] && { echo "Usage: sounds pack use <name>" >&2; exit 1; }
+      if [[ ! -d "$SOUNDS_DIR/$name" ]]; then
+        echo "sounds: pack '$name' not found in $SOUNDS_DIR" >&2
+        echo "Available packs:"; list_pack_dirs | xargs -I{} basename {} 2>/dev/null || echo "  (none)"
+        exit 1
+      fi
+      config_set PACK "$name"
+      echo "sounds: using pack '$name'"
+      ;;
+
+    cycle)
+      config_unset PACK
+      echo "sounds: cycling resumed"
+      ;;
+
+    next)
+      local packs=()
+      while IFS= read -r dir; do
+        [[ -n "$dir" ]] && packs+=("$dir")
+      done < <(list_pack_dirs)
+
+      if [[ ${#packs[@]} -le 1 ]]; then
+        echo "sounds: only one pack available" >&2; exit 1
+      fi
+
+      local index=0
+      [[ -f "$SOUNDS_DIR/.pack_index" ]] && index=$(< "$SOUNDS_DIR/.pack_index")
+      index=$(( (index + 1) % ${#packs[@]} ))
+      echo "$index" > "$SOUNDS_DIR/.pack_index"
+      echo "sounds: switched to '$(basename "${packs[$index]}")'"
+      ;;
+
+    *)
+      echo "Usage: sounds pack [list|use <name>|cycle|next]" >&2; exit 1
+      ;;
+  esac
+}
+
+cmd_preview() {
+  local hook="${1:-stop}"
+  local sound_stem
+  sound_stem=$(hook_sound "$hook")
+  if [[ -z "$sound_stem" ]]; then
+    echo "sounds: unknown hook '$hook'" >&2; exit 1
+  fi
+  local pack_dir file
+  pack_dir=$(current_pack_dir)
+  file=$(find_sound_file "$pack_dir" "$sound_stem")
+  if [[ -z "$file" ]]; then
+    echo "sounds: no sound file for '$hook' in $(basename "$pack_dir")" >&2; exit 1
+  fi
+  echo "Playing: $file"
+  afplay -v "$(config_get VOLUME "0.5")" "$file"
+}
+
+cmd_help() {
+  cat <<EOF
+Usage: sounds <command> [args]
+
+Control
+  toggle                    pause or resume all sounds
+  enable [hook|all]         enable a specific hook or all
+  disable [hook|all]        disable a specific hook or all
+  status                    show full state — sounds, pack, options, hooks
+  preview [hook]            play the sound for a hook to test it (default: stop)
+
+Volume & options
+  volume [0.0-1.0]          get or set playback volume
+  meeting [on|off]          suppress sounds when microphone is in use
+  headphones [on|off]       only play sounds through headphones (not speakers)
+  focused [on|off]          suppress sounds when this terminal tab is focused
+  silent [seconds]          suppress Stop sounds for tasks shorter than N seconds
+
+Packs
+  pack list                 list installed packs
+  pack use <name>           pin to a specific pack
+  pack cycle                unpin, resume round-robin cycling
+  pack next                 manually advance to the next pack
+
+Hooks
+  stop                      agent finished a task              (on by default)
+  notification              agent sent a notification          (on by default)
+  permission_request        waiting for tool approval          (on by default)
+  post_tool_use_failure     a tool call (Bash) failed          (on by default)
+  subagent_stop             a subagent finished                (on by default)
+  session_start             new session                        (off by default)
+  session_end               session ended                      (off by default)
+  subagent_start            subagent started                   (off by default)
+  user_prompt_submit        prompt submitted                   (off by default)
+  pre_compact               context compacting                 (off by default)
+
+Sound files: $SOUNDS_DIR
+Config:      $CONFIG
+EOF
+}
+
+# --- Dispatch ---
+
+CMD="${1:-help}"
+shift || true
+
+case "$CMD" in
+  toggle)         cmd_toggle ;;
+  status)         cmd_status ;;
+  enable)         cmd_enable "${1:-}" ;;
+  disable)        cmd_disable "${1:-}" ;;
+  volume)         cmd_volume "${1:-}" ;;
+  meeting)        cmd_meeting "${1:-}" ;;
+  headphones)     cmd_headphones "${1:-}" ;;
+  focused)        cmd_focused "${1:-}" ;;
+  silent)         cmd_silent "${1:-}" ;;
+  pack)           cmd_pack "$@" ;;
+  preview)        cmd_preview "${1:-stop}" ;;
+  help|--help|-h) cmd_help ;;
+  *)
+    echo "sounds: unknown command '$CMD'" >&2
+    echo "Run 'sounds help' for usage." >&2
+    exit 1
+    ;;
+esac

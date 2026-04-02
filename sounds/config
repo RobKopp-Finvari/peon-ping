@@ -1,0 +1,78 @@
+# Claude Code sound hook configuration
+# This file lives at ~/.claude/sounds/config
+#
+# Changes take effect immediately — no restart needed.
+# CLI: sounds help
+
+# Master switch — set to "false" to silence everything (or run: sounds toggle)
+ENABLED=true
+
+# Playback volume: 0.0 (silent) to 1.0 (full)
+VOLUME=0.5
+
+# Pinned pack — set by `sounds pack use <name>`, cleared by `sounds pack cycle`
+# Uncomment to always use a specific pack instead of cycling
+# PACK=
+
+# Meeting detect: suppress sounds when the microphone is in use (e.g. on a call).
+# Requires the meeting-detect binary — compiled automatically by setup.sh if
+# Xcode command line tools are available (swiftc). Adds ~50ms latency per sound.
+MEETING_DETECT=false
+
+# Headphones only: suppress sounds when playing through built-in speakers.
+# Useful if you only want sounds through headphones or AirPods.
+# Uses system_profiler — adds ~1s latency per sound when enabled.
+HEADPHONES_ONLY=false
+
+# Tab focus: suppress sounds when this terminal tab is already in the foreground.
+# Useful if you only want sounds when you're working in another app.
+# For iTerm2, checks the specific tab; for other terminals checks if the app is frontmost.
+SUPPRESS_SOUND_WHEN_TAB_FOCUSED=true
+
+# Silent window: suppress Stop sounds for tasks that finish in under N seconds.
+# Prevents noise from quick one-liner commands. Set to 0 to disable.
+# Example: SILENT_WINDOW_SECONDS=3
+SILENT_WINDOW_SECONDS=0
+
+# Sound packs
+# -----------
+# Create subdirectories to define packs — the system cycles through them
+# (round-robin) on each new session:
+#
+#   ~/.claude/sounds/
+#     pack-a/
+#       stop.wav
+#       notification.wav
+#     pack-b/
+#       stop.wav
+#       notification.wav
+#
+# With no subdirectories, sounds are loaded from ~/.claude/sounds/ directly.
+# Missing sound files are silently skipped — packs don't need to be complete.
+# Supported formats: .wav  .mp3  .aiff  .m4a
+#
+# Sound filenames map to hook events:
+#   stop.wav                  ← agent finished a task
+#   notification.wav          ← agent sent a notification
+#   permission_request.wav    ← waiting for tool approval
+#   post_tool_use_failure.wav ← a tool call (Bash) failed
+#   subagent_stop.wav         ← a subagent finished
+#   session_start.wav         ← new session began
+#   session_end.wav           ← session ended
+#   subagent_start.wav        ← subagent started
+#   user_prompt_submit.wav    ← prompt submitted
+#   pre_compact.wav           ← context compacting
+
+# --- Enabled by default ---
+STOP=true
+NOTIFICATION=true
+PERMISSION_REQUEST=true
+POST_TOOL_USE_FAILURE=true
+SUBAGENT_STOP=true
+
+# --- Disabled by default (enable if useful to you) ---
+SESSION_START=false
+SESSION_END=false
+SUBAGENT_START=false
+USER_PROMPT_SUBMIT=false
+PRE_COMPACT=false
