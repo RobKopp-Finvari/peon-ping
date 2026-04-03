@@ -151,7 +151,7 @@ terminal_is_focused() {
 
   case "$frontmost" in
     iTerm2)
-      [[ -z "$my_tty" ]] && return 0
+      [[ -z "$my_tty" ]] && return 1
       local active_ttys
       active_ttys=$(osascript -e 'tell application "iTerm2"
         set ttys to {}
@@ -170,7 +170,7 @@ terminal_is_focused() {
       return 1
       ;;
     Terminal)
-      [[ -z "$my_tty" ]] && return 0
+      [[ -z "$my_tty" ]] && return 1
       local active_ttys
       active_ttys=$(osascript -e 'tell application "Terminal"
         set ttys to {}
