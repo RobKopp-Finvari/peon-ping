@@ -30,6 +30,14 @@ bash ~/.claude/hooks/sounds/sounds.sh pack cycle
 
 Clears the pin and resumes round-robin cycling through packs on each new session.
 
+## Randomize pack selection
+
+```bash
+bash ~/.claude/hooks/sounds/sounds.sh pack random
+```
+
+Clears the pin and picks a random pack on each new session instead of cycling sequentially.
+
 ## Advance to the next pack manually
 
 ```bash
@@ -41,5 +49,6 @@ bash ~/.claude/hooks/sounds/sounds.sh pack next
 - "Use the warcraft pack" → list packs, then run `pack use warcraft`
 - "Switch to glados" → list packs, then run `pack use glados`
 - "Go back to cycling through packs" → run `pack cycle`
+- "Randomize packs" → run `pack random`
 - "What packs do I have?" → run `pack list`
 - "Next pack" → run `pack next`

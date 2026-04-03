@@ -306,10 +306,11 @@ cmd_status() {
   elif [[ -n "$pinned" ]]; then
     echo "Pack:    $pinned (pinned)"
   else
-    local index=0
+    local index=0 pack_order
     [[ -f "$SOUNDS_DIR/.pack_index" ]] && index=$(< "$SOUNDS_DIR/.pack_index")
     index=$(( index % ${#packs[@]} ))
-    echo "Pack:    $pack_name ($(( index + 1 )) of ${#packs[@]}, cycling)"
+    pack_order=$(config_get PACK_ORDER "cycle")
+    echo "Pack:    $pack_name ($(( index + 1 )) of ${#packs[@]}, $pack_order)"
   fi
 
   # Optional features
@@ -517,7 +518,14 @@ cmd_pack() {
 
     cycle)
       config_unset PACK
-      echo "sounds: cycling resumed"
+      config_set PACK_ORDER cycle
+      echo "sounds: cycling resumed (round-robin)"
+      ;;
+
+    random)
+      config_unset PACK
+      config_set PACK_ORDER random
+      echo "sounds: cycling resumed (random)"
       ;;
 
     next)
@@ -555,7 +563,7 @@ cmd_pack() {
       ;;
 
     *)
-      echo "Usage: sounds pack [list|use <name>|remove <name>|cycle|next]" >&2; exit 1
+      echo "Usage: sounds pack [list|use <name>|remove <name>|cycle|random|next]" >&2; exit 1
       ;;
   esac
 }
@@ -608,6 +616,7 @@ Packs
   pack use <name>           pin to a pack, installing from registry if needed
   pack remove <name>        uninstall a pack
   pack cycle                unpin, resume round-robin cycling
+  pack random               unpin, pick a random pack each session
   pack next                 manually advance to the next pack
 
 Hooks

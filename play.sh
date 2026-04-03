@@ -53,8 +53,12 @@ else
   INDEX=$(( INDEX % ${#PACKS[@]} ))
   PACK_DIR="${PACKS[$INDEX]}"
 
-  # Advance to the next pack on SessionStart — even if no sound plays for that event
+  # Select pack on SessionStart — even if no sound plays for that event
   if [[ "$EVENT" == "SessionStart" && ${#PACKS[@]} -gt 1 ]]; then
+    if [[ "${PACK_ORDER:-cycle}" == "random" ]]; then
+      INDEX=$(( RANDOM % ${#PACKS[@]} ))
+      PACK_DIR="${PACKS[$INDEX]}"
+    fi
     echo $(( (INDEX + 1) % ${#PACKS[@]} )) > "$INDEX_FILE"
   fi
 fi

@@ -14,6 +14,9 @@ VOLUME=0.5
 # Uncomment to always use a specific pack instead of cycling
 # PACK=
 
+# Pack order: "cycle" for round-robin, "random" for random selection each session
+# PACK_ORDER=cycle
+
 # Meeting detect: suppress sounds when the microphone is in use (e.g. on a call).
 # Requires the meeting-detect binary — compiled automatically by setup.sh if
 # Xcode command line tools are available (swiftc). Adds ~50ms latency per sound.
