@@ -147,7 +147,7 @@ terminal_is_focused() {
   frontmost=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null) || return 1
 
   local my_tty
-  my_tty=$(tty 2>/dev/null || echo "")
+  my_tty=$(tty 2>/dev/null) || my_tty=""
 
   case "$frontmost" in
     iTerm2)
