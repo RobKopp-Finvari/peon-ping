@@ -89,15 +89,51 @@ if [[ "$EVENT" == "Stop" && "${SILENT_WINDOW_SECONDS:-0}" != "0" && -f "$STATE_F
   fi
 fi
 
-# --- Find the sound file (try common audio formats) ---
+# --- Find the sound file ---
 FILE=""
-for ext in wav mp3 aiff m4a; do
-  f="$PACK_DIR/$sound.$ext"
-  if [[ -f "$f" ]]; then
-    FILE="$f"
-    break
+
+# CESP manifest pack: read openpeon.json and pick a random sound for this event
+if [[ -f "$PACK_DIR/openpeon.json" ]]; then
+  cesp_cat=""
+  case "$EVENT" in
+    Stop|SubagentStop)              cesp_cat="task.complete" ;;
+    Notification)                   cesp_cat="task.progress" ;;
+    PermissionRequest)              cesp_cat="input.required" ;;
+    PostToolUseFailure)             cesp_cat="task.error" ;;
+    SessionStart)                   cesp_cat="session.start" ;;
+    SessionEnd)                     cesp_cat="session.end" ;;
+    UserPromptSubmit|SubagentStart) cesp_cat="task.acknowledge" ;;
+    PreCompact)                     cesp_cat="resource.limit" ;;
+  esac
+
+  if [[ -n "$cesp_cat" ]]; then
+    FILE=$(python3 - "$PACK_DIR" "$cesp_cat" <<'PYEOF'
+import json, sys, random, os
+pack_dir, category = sys.argv[1], sys.argv[2]
+try:
+    m = json.load(open(os.path.join(pack_dir, 'openpeon.json')))
+    sounds = m.get('categories', {}).get(category, {}).get('sounds', [])
+    if sounds:
+        s = random.choice(sounds)
+        p = os.path.join(pack_dir, s['file'])
+        if os.path.isfile(p):
+            print(p)
+except Exception:
+    pass
+PYEOF
+    )
   fi
-done
+fi
+
+# Flat-file fallback (hand-rolled packs without a manifest)
+if [[ -z "$FILE" ]]; then
+  flat_files=()
+  for f in "$PACK_DIR/$sound".*; do
+    [[ -f "$f" ]] || continue
+    case "${f##*.}" in wav|mp3|aiff|m4a) flat_files+=("$f") ;; esac
+  done
+  [[ ${#flat_files[@]} -gt 0 ]] && FILE="${flat_files[$(( RANDOM % ${#flat_files[@]} ))]}"
+fi
 
 # No sound file for this event — silent exit (not an error)
 [[ -z "$FILE" ]] && exit 0

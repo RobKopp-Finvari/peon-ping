@@ -100,13 +100,165 @@ hook_sound() {
   esac
 }
 
+hook_cesp_cat() {
+  case "$1" in
+    stop|subagent_stop)                       echo "task.complete" ;;
+    notification|notify)                      echo "task.progress" ;;
+    permission|permission_request)            echo "input.required" ;;
+    failure|post_tool_use_failure)            echo "task.error" ;;
+    session_start)                            echo "session.start" ;;
+    session_end)                              echo "session.end" ;;
+    subagent_start|prompt|user_prompt_submit) echo "task.acknowledge" ;;
+    compact|pre_compact)                      echo "resource.limit" ;;
+    *)                                        echo "" ;;
+  esac
+}
+
 find_sound_file() {
   local pack_dir="$1" stem="$2"
-  for ext in wav mp3 aiff m4a; do
-    local f="$pack_dir/$stem.$ext"
-    [[ -f "$f" ]] && echo "$f" && return
+  local files=()
+  for f in "$pack_dir/$stem".*; do
+    [[ -f "$f" ]] || continue
+    case "${f##*.}" in wav|mp3|aiff|m4a) files+=("$f") ;; esac
   done
-  echo ""
+  [[ ${#files[@]} -gt 0 ]] && echo "${files[$(( RANDOM % ${#files[@]} ))]}" || echo ""
+}
+
+count_sound_files() {
+  local pack_dir="$1" stem="$2"
+  local count=0
+  for f in "$pack_dir/$stem".*; do
+    [[ -f "$f" ]] || continue
+    case "${f##*.}" in wav|mp3|aiff|m4a) (( count++ )) ;; esac
+  done
+  echo "$count"
+}
+
+cesp_find_sound() {
+  local pack_dir="$1" category="$2"
+  python3 - "$pack_dir" "$category" <<'PYEOF'
+import json, sys, os
+pack_dir, category = sys.argv[1], sys.argv[2]
+try:
+    m = json.load(open(os.path.join(pack_dir, 'openpeon.json')))
+    sounds = m.get('categories', {}).get(category, {}).get('sounds', [])
+    if sounds:
+        p = os.path.join(pack_dir, sounds[0]['file'])
+        if os.path.isfile(p):
+            print(p)
+except Exception:
+    pass
+PYEOF
+}
+
+pack_install() {
+  local name="$1"
+
+  if ! echo "$name" | grep -qE '^[a-z0-9][a-z0-9_-]{0,63}$'; then
+    echo "sounds: invalid pack name '$name'" >&2; exit 1
+  fi
+
+  local pack_dir="$SOUNDS_DIR/$name"
+
+  # Fetch registry to a temp file (avoid stdin conflict with heredoc)
+  local tmp_reg
+  tmp_reg=$(mktemp)
+  echo "  Fetching registry..."
+  if ! curl -sf "https://raw.githubusercontent.com/PeonPing/registry/main/index.json" -o "$tmp_reg"; then
+    rm -f "$tmp_reg"
+    echo "sounds: failed to fetch registry" >&2; exit 1
+  fi
+
+  # Extract pack metadata
+  local pack_meta
+  if ! pack_meta=$(python3 - "$name" "$tmp_reg" <<'PYEOF'
+import json, sys
+name, reg_file = sys.argv[1], sys.argv[2]
+data = json.load(open(reg_file))
+p = next((p for p in data.get('packs', []) if p['name'] == name), None)
+if not p:
+    sys.exit(1)
+print(p.get('source_repo', ''))
+print(p.get('source_ref', 'main'))
+print(p.get('source_path', name))
+print(p.get('display_name', name))
+PYEOF
+  ); then
+    rm -f "$tmp_reg"
+    echo "sounds: pack '$name' not found in registry" >&2; exit 1
+  fi
+  rm -f "$tmp_reg"
+
+  local source_repo source_ref source_path display_name
+  source_repo=$(echo "$pack_meta" | sed -n '1p')
+  source_ref=$(echo "$pack_meta"  | sed -n '2p')
+  source_path=$(echo "$pack_meta" | sed -n '3p')
+  display_name=$(echo "$pack_meta" | sed -n '4p')
+
+  local base_url="https://raw.githubusercontent.com/${source_repo}/${source_ref}/${source_path}"
+
+  # Download manifest
+  echo "  Installing $display_name..."
+  mkdir -p "$pack_dir/sounds"
+  if ! curl -sf "$base_url/openpeon.json" -o "$pack_dir/openpeon.json"; then
+    rm -rf "$pack_dir"
+    echo "sounds: failed to download manifest for '$name'" >&2; exit 1
+  fi
+
+  # Parse manifest: emit encoded_url|local_path|sha256 per unique sound file
+  local file_list
+  if ! file_list=$(python3 - "$pack_dir" <<'PYEOF'
+import json, sys, os, urllib.parse
+pack_dir = sys.argv[1]
+m = json.load(open(os.path.join(pack_dir, 'openpeon.json')))
+seen = set()
+for cat in m.get('categories', {}).values():
+    for s in cat.get('sounds', []):
+        f = s['file']
+        if f in seen:
+            continue
+        seen.add(f)
+        norm = os.path.normpath(f)
+        if norm.startswith('..') or os.path.isabs(norm):
+            continue
+        encoded = urllib.parse.quote(f, safe='/')
+        print('{}|{}|{}'.format(encoded, f, s.get('sha256', '')))
+PYEOF
+  ); then
+    rm -rf "$pack_dir"
+    echo "sounds: failed to parse manifest for '$name'" >&2; exit 1
+  fi
+
+  # Download each sound file
+  local failed=0
+  while IFS='|' read -r encoded_path local_path expected_sha; do
+    [[ -z "$local_path" ]] && continue
+    local dest="$pack_dir/$local_path"
+    mkdir -p "$(dirname "$dest")"
+    printf "    %-38s" "$(basename "$local_path")"
+    if ! curl -sf "$base_url/$encoded_path" -o "$dest"; then
+      echo "FAILED"
+      failed=1
+      continue
+    fi
+    if [[ -n "$expected_sha" ]]; then
+      local actual_sha
+      actual_sha=$(shasum -a 256 "$dest" | cut -d' ' -f1)
+      if [[ "$actual_sha" != "$expected_sha" ]]; then
+        echo "CHECKSUM MISMATCH"
+        failed=1
+        continue
+      fi
+    fi
+    echo "OK"
+  done <<< "$file_list"
+
+  if [[ $failed -ne 0 ]]; then
+    rm -rf "$pack_dir"
+    echo "sounds: install failed — removing partial download" >&2; exit 1
+  fi
+
+  echo "  '$name' installed"
 }
 
 ALL_HOOKS=(stop notification permission_request post_tool_use_failure subagent_stop
@@ -193,8 +345,14 @@ cmd_status() {
     state=$(config_get "$key" "$default")
 
     if [[ "$state" == "true" ]]; then
-      local display_file
-      [[ -n "$file" ]] && display_file=$(basename "$file") || display_file="— no sound file"
+      local display_file count
+      if [[ -n "$file" ]]; then
+        count=$(count_sound_files "$pack_dir" "$sound_stem")
+        display_file=$(basename "$file")
+        [[ $count -gt 1 ]] && display_file="$display_file  (+$(( count - 1 )) more)"
+      else
+        display_file="— no sound file"
+      fi
       printf "%-26s %-5s %s\n" "$hook" "on" "$display_file"
     else
       printf "%-26s %s\n" "$hook" "off"
@@ -350,9 +508,7 @@ cmd_pack() {
       local name="${1:-}"
       [[ -z "$name" ]] && { echo "Usage: sounds pack use <name>" >&2; exit 1; }
       if [[ ! -d "$SOUNDS_DIR/$name" ]]; then
-        echo "sounds: pack '$name' not found in $SOUNDS_DIR" >&2
-        echo "Available packs:"; list_pack_dirs | xargs -I{} basename {} 2>/dev/null || echo "  (none)"
-        exit 1
+        pack_install "$name"
       fi
       config_set PACK "$name"
       echo "sounds: using pack '$name'"
@@ -380,8 +536,25 @@ cmd_pack() {
       echo "sounds: switched to '$(basename "${packs[$index]}")'"
       ;;
 
+    remove)
+      local name="${1:-}"
+      [[ -z "$name" ]] && { echo "Usage: sounds pack remove <name>" >&2; exit 1; }
+      if [[ ! -d "$SOUNDS_DIR/$name" ]]; then
+        echo "sounds: pack '$name' is not installed" >&2; exit 1
+      fi
+      rm -rf "$SOUNDS_DIR/$name"
+      local pinned
+      pinned=$(config_get PACK "")
+      if [[ "$pinned" == "$name" ]]; then
+        config_unset PACK
+        echo "sounds: '$name' removed (was pinned — cycling resumed)"
+      else
+        echo "sounds: '$name' removed"
+      fi
+      ;;
+
     *)
-      echo "Usage: sounds pack [list|use <name>|cycle|next]" >&2; exit 1
+      echo "Usage: sounds pack [list|use <name>|remove <name>|cycle|next]" >&2; exit 1
       ;;
   esac
 }
@@ -396,6 +569,14 @@ cmd_preview() {
   local pack_dir file
   pack_dir=$(current_pack_dir)
   file=$(find_sound_file "$pack_dir" "$sound_stem")
+
+  # CESP manifest fallback for packs that use openpeon.json
+  if [[ -z "$file" && -f "$pack_dir/openpeon.json" ]]; then
+    local cesp_cat
+    cesp_cat=$(hook_cesp_cat "$hook")
+    [[ -n "$cesp_cat" ]] && file=$(cesp_find_sound "$pack_dir" "$cesp_cat")
+  fi
+
   if [[ -z "$file" ]]; then
     echo "sounds: no sound file for '$hook' in $(basename "$pack_dir")" >&2; exit 1
   fi
@@ -423,7 +604,8 @@ Volume & options
 
 Packs
   pack list                 list installed packs
-  pack use <name>           pin to a specific pack
+  pack use <name>           pin to a pack, installing from registry if needed
+  pack remove <name>        uninstall a pack
   pack cycle                unpin, resume round-robin cycling
   pack next                 manually advance to the next pack
 
