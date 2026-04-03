@@ -164,7 +164,7 @@ terminal_is_focused() {
       end tell' 2>/dev/null || echo "")
       local IFS=','
       for t in $active_ttys; do
-        t="${t## }"  # trim leading space from AppleScript list format
+        t="${t//[[:space:]]/}"  # strip all whitespace (spaces, newlines)
         [[ "$t" == "$my_tty" ]] && return 0
       done
       return 1
@@ -183,7 +183,7 @@ terminal_is_focused() {
       end tell' 2>/dev/null || echo "")
       local IFS=','
       for t in $active_ttys; do
-        t="${t## }"  # trim leading space from AppleScript list format
+        t="${t//[[:space:]]/}"  # strip all whitespace (spaces, newlines)
         [[ "$t" == "$my_tty" ]] && return 0
       done
       return 1
