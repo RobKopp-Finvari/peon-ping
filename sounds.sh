@@ -507,7 +507,8 @@ cmd_pack() {
     use)
       local name="${1:-}"
       [[ -z "$name" ]] && { echo "Usage: sounds pack use <name>" >&2; exit 1; }
-      if [[ ! -d "$SOUNDS_DIR/$name" ]]; then
+      if [[ ! -f "$SOUNDS_DIR/$name/openpeon.json" ]]; then
+        [[ -d "$SOUNDS_DIR/$name" ]] && rm -rf "$SOUNDS_DIR/$name"
         pack_install "$name"
       fi
       config_set PACK "$name"
