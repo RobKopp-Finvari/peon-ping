@@ -15,7 +15,7 @@ VOLUME=0.5
 # PACK=
 
 # Pack order: "cycle" for round-robin, "random" for random selection each session
-# PACK_ORDER=cycle
+PACK_ORDER=random
 
 # Meeting detect: suppress sounds when the microphone is in use (e.g. on a call).
 # Requires the meeting-detect binary — compiled automatically by setup.sh if

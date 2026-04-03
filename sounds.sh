@@ -309,7 +309,7 @@ cmd_status() {
     local index=0 pack_order
     [[ -f "$SOUNDS_DIR/.pack_index" ]] && index=$(< "$SOUNDS_DIR/.pack_index")
     index=$(( index % ${#packs[@]} ))
-    pack_order=$(config_get PACK_ORDER "cycle")
+    pack_order=$(config_get PACK_ORDER "random")
     echo "Pack:    $pack_name ($(( index + 1 )) of ${#packs[@]}, $pack_order)"
   fi
 

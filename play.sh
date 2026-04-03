@@ -55,7 +55,7 @@ else
 
   # Select pack on SessionStart — even if no sound plays for that event
   if [[ "$EVENT" == "SessionStart" && ${#PACKS[@]} -gt 1 ]]; then
-    if [[ "${PACK_ORDER:-cycle}" == "random" ]]; then
+    if [[ "${PACK_ORDER:-random}" == "random" ]]; then
       INDEX=$(( RANDOM % ${#PACKS[@]} ))
       PACK_DIR="${PACKS[$INDEX]}"
     fi
