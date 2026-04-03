@@ -145,14 +145,13 @@ fi
 terminal_is_focused() {
   local frontmost
   frontmost=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null) || return 1
+
+  local my_tty
+  my_tty=$(tty 2>/dev/null || echo "")
+
   case "$frontmost" in
     iTerm2)
-      # iTerm2 is frontmost — check if it's specifically our tab that's active
-      local my_tty
-      my_tty=$(tty 2>/dev/null || echo "")
-      if [[ -z "$my_tty" ]]; then
-        return 0  # No TTY info, assume focused
-      fi
+      [[ -z "$my_tty" ]] && return 0
       local active_ttys
       active_ttys=$(osascript -e 'tell application "iTerm2"
         set ttys to {}
@@ -168,9 +167,28 @@ terminal_is_focused() {
         t="${t## }"  # trim leading space from AppleScript list format
         [[ "$t" == "$my_tty" ]] && return 0
       done
-      return 1  # Our tab is not the active tab in any window
+      return 1
       ;;
-    Terminal|Ghostty|ghostty|Warp|Alacritty|kitty|WezTerm)
+    Terminal)
+      [[ -z "$my_tty" ]] && return 0
+      local active_ttys
+      active_ttys=$(osascript -e 'tell application "Terminal"
+        set ttys to {}
+        repeat with w in windows
+          try
+            set end of ttys to tty of selected tab of w
+          end try
+        end repeat
+        return ttys
+      end tell' 2>/dev/null || echo "")
+      local IFS=','
+      for t in $active_ttys; do
+        t="${t## }"  # trim leading space from AppleScript list format
+        [[ "$t" == "$my_tty" ]] && return 0
+      done
+      return 1
+      ;;
+    Ghostty|ghostty|Warp|Alacritty|kitty|WezTerm)
       return 0  # Terminal app is frontmost — assume our session is focused
       ;;
     *)
