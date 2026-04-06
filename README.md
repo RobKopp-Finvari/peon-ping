@@ -1,6 +1,6 @@
 # claude-sounds
 
-Minimal macOS sound hook for Claude Code. Plays a sound when Claude finishes a task, needs your attention, or hits an error. No registry, no network, no external dependencies beyond `afplay`.
+Minimal macOS sound hook for Claude Code. Plays a sound when Claude finishes a task, needs your attention, or hits an error. No external dependencies beyond `afplay`.
 
 ## Install
 
@@ -41,9 +41,11 @@ Name your sound files after the hook event they should play for:
 
 Missing sound files are silently skipped — you only need files for events you care about.
 
+Multiple files for the same event (e.g. `stop.wav` and `stop.mp3`, or in a manifest pack, multiple sounds in a category) are supported — one is chosen at random each time the event fires.
+
 ## Sound packs
 
-Create subdirectories in `~/.claude/sounds/` to define multiple packs. The system cycles through them (round-robin) on each new Claude session:
+Create subdirectories in `~/.claude/sounds/` to define multiple packs. By default, the system picks a random pack on each new Claude session:
 
 ```
 ~/.claude/sounds/
@@ -57,11 +59,18 @@ Create subdirectories in `~/.claude/sounds/` to define multiple packs. The syste
 ```
 
 - Packs don't need to be complete — missing files are silently skipped
-- Packs cycle on `SessionStart` whether or not that event has a sound
+- A new pack is selected on `SessionStart` whether or not that event has a sound
 - Pin a specific pack: `sounds pack use <name>`
-- Resume cycling: `sounds pack cycle`
+- Resume random selection: `sounds pack random` (default)
+- Switch to round-robin cycling: `sounds pack cycle`
+- Install a pack from the registry: `sounds pack use <name>` (auto-downloads if not found locally)
+- Remove a pack: `sounds pack remove <name>`
 
 With no subdirectories, sounds load from `~/.claude/sounds/` directly.
+
+### Manifest packs (openpeon.json)
+
+Packs can include an `openpeon.json` manifest that maps sounds to semantic categories (e.g. `task.complete`, `task.error`, `input.required`). Manifest packs are installed automatically from the registry via `sounds pack use <name>`. When a manifest is present, sounds are resolved from it first; flat-file naming (`stop.wav`, etc.) is used as a fallback.
 
 ## Configuration
 
@@ -77,7 +86,8 @@ With no subdirectories, sounds load from `~/.claude/sounds/` directly.
 | `MEETING_DETECT` | `false` | Skip sounds when the microphone is in use — requires `meeting-detect` binary (compiled by `setup.sh` if `swiftc` is available) |
 | `HEADPHONES_ONLY` | `false` | Skip sounds when playing through built-in speakers — uses `system_profiler`, adds ~1s latency |
 | `SILENT_WINDOW_SECONDS` | `0` | Skip `Stop` sounds for tasks that finish in under N seconds (0 = disabled) |
-| `PACK` | *(unset)* | Pin to a specific pack by name; set by `sounds pack use`, cleared by `sounds pack cycle` |
+| `PACK` | *(unset)* | Pin to a specific pack by name; set by `sounds pack use`, cleared by `sounds pack cycle` or `sounds pack random` |
+| `PACK_ORDER` | `random` | How to select the next pack on `SessionStart`: `random` or `cycle` (round-robin) |
 
 ### Per-hook toggles
 
@@ -110,8 +120,10 @@ sounds focused [on|off]          toggle tab-focus suppression
 sounds silent [seconds]          get or set the silent window
 
 sounds pack list                 list installed packs
-sounds pack use <name>           pin to a specific pack
+sounds pack use <name>           pin to a pack (installs from registry if needed)
+sounds pack remove <name>        uninstall a pack
 sounds pack cycle                unpin, resume round-robin cycling
+sounds pack random               unpin, pick a random pack each session (default)
 sounds pack next                 manually advance to the next pack
 ```
 
