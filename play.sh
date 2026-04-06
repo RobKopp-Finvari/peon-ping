@@ -19,6 +19,13 @@ SOUNDS_DIR="${CLAUDE_SOUNDS_DIR:-$HOME/.claude/sounds}"
 CONFIG="$SOUNDS_DIR/config"
 STATE_FILE="$SOUNDS_DIR/.state"
 
+# Read session_id from the JSON that Claude Code passes on stdin.
+# Non-blocking: if stdin has no data (manual invocation), skip gracefully.
+SESSION_ID=""
+if read -t 0.1 -r STDIN_JSON 2>/dev/null; then
+  SESSION_ID=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('session_id',''))" "$STDIN_JSON" 2>/dev/null) || true
+fi
+
 # Load user config — simple KEY=value pairs
 [[ -f "$CONFIG" ]] && source "$CONFIG"
 
@@ -40,12 +47,26 @@ while IFS= read -r dir; do
   PACKS+=("$dir")
 done < <(find "$SOUNDS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 
+SESSION_FILE=""
+[[ -n "$SESSION_ID" ]] && SESSION_FILE="$SOUNDS_DIR/.session_${SESSION_ID}"
+
 if [[ -n "${PACK:-}" && -d "$SOUNDS_DIR/${PACK}" ]]; then
   # Pinned to a specific pack via `sounds pack use <name>`
   PACK_DIR="$SOUNDS_DIR/${PACK}"
 elif [[ ${#PACKS[@]} -eq 0 ]]; then
   # No packs — use SOUNDS_DIR directly
   PACK_DIR="$SOUNDS_DIR"
+elif [[ -n "$SESSION_FILE" && -f "$SESSION_FILE" && "$EVENT" != "SessionStart" ]]; then
+  # Session already has a pack locked in — use it
+  SAVED_PACK=$(< "$SESSION_FILE")
+  if [[ -d "$SOUNDS_DIR/$SAVED_PACK" ]]; then
+    PACK_DIR="$SOUNDS_DIR/$SAVED_PACK"
+  else
+    # Pack was removed; fall through to normal resolution
+    rm -f "$SESSION_FILE"
+    SESSION_FILE=""
+    PACK_DIR="$SOUNDS_DIR"
+  fi
 else
   INDEX_FILE="$SOUNDS_DIR/.pack_index"
   INDEX=0
@@ -60,7 +81,20 @@ else
       PACK_DIR="${PACKS[$INDEX]}"
     fi
     echo $(( (INDEX + 1) % ${#PACKS[@]} )) > "$INDEX_FILE"
+
+    # Lock this pack for the session's lifetime
+    if [[ -n "$SESSION_FILE" ]]; then
+      echo "$(basename "$PACK_DIR")" > "$SESSION_FILE"
+    fi
+
+    # Clean up stale session files (older than 24h)
+    find "$SOUNDS_DIR" -name ".session_*" -mtime +1 -delete 2>/dev/null || true
   fi
+fi
+
+# Clean up session file on SessionEnd
+if [[ "$EVENT" == "SessionEnd" && -n "$SESSION_FILE" ]]; then
+  rm -f "$SESSION_FILE"
 fi
 
 # --- Map hook event → per-event enabled flag + sound file stem ---
