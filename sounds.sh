@@ -512,8 +512,40 @@ cmd_pack() {
         [[ -d "$SOUNDS_DIR/$name" ]] && rm -rf "$SOUNDS_DIR/$name"
         pack_install "$name"
       fi
-      config_set PACK "$name"
-      echo "sounds: using pack '$name'"
+
+      # If random mode is active and no pack is pinned, ask before pinning
+      local current_order current_pin
+      current_order=$(config_get PACK_ORDER "random")
+      current_pin=$(config_get PACK "")
+      if [[ "$current_order" == "random" && -z "$current_pin" && -t 0 ]]; then
+        local choice=""
+        echo "Random mode is active. Pin to '$name' or just add to rotation?"
+        read -rp "  [p] Pin to this pack  [r] Add to rotation (default): " choice
+        case "$choice" in
+          p|P)
+            config_set PACK "$name"
+            echo "sounds: pinned to '$name' (random cycling paused)"
+            ;;
+          *)
+            echo "sounds: '$name' added to rotation"
+            ;;
+        esac
+      else
+        config_set PACK "$name"
+        echo "sounds: using pack '$name'"
+      fi
+      ;;
+
+    install)
+      local name="${1:-}"
+      [[ -z "$name" ]] && { echo "Usage: sounds pack install <name>" >&2; exit 1; }
+      if [[ -f "$SOUNDS_DIR/$name/openpeon.json" ]]; then
+        echo "sounds: pack '$name' is already installed"
+      else
+        [[ -d "$SOUNDS_DIR/$name" ]] && rm -rf "$SOUNDS_DIR/$name"
+        pack_install "$name"
+        echo "sounds: '$name' installed and added to rotation"
+      fi
       ;;
 
     cycle)
@@ -563,7 +595,7 @@ cmd_pack() {
       ;;
 
     *)
-      echo "Usage: sounds pack [list|use <name>|remove <name>|cycle|random|next]" >&2; exit 1
+      echo "Usage: sounds pack [list|use <name>|install <name>|remove <name>|cycle|random|next]" >&2; exit 1
       ;;
   esac
 }
@@ -613,7 +645,8 @@ Volume & options
 
 Packs
   pack list                 list installed packs
-  pack use <name>           pin to a pack, installing from registry if needed
+  pack use <name>           pin to a pack (prompts in random mode)
+  pack install <name>       install a pack without pinning
   pack remove <name>        uninstall a pack
   pack cycle                unpin, resume round-robin cycling
   pack random               unpin, pick a random pack each session
